@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
+use std::fmt;
+
 use crate::compat::{BitvSet, SmallIntMap};
 use crate::{GroupHelper, KindHelper, RegisterHelper};
-
-use std::fmt;
 
 macro_rules! define_entity {
     ($name:ident, $short_name:literal) => {
@@ -28,20 +29,288 @@ define_entity!(InstrId, "i");
 define_entity!(IntervalId, "int");
 define_entity!(StackId, "s");
 
-#[derive(Debug)]
-pub struct Graph<K, G, R> {
-    pub root: Option<BlockId>,
+pub struct BlockBuilder<'graph, K, G, R> {
+    graph: &'graph mut GraphBuilder<K, G, R>,
+    block: BlockId,
+}
+
+impl<
+        'a,
+        G: GroupHelper<Register = R>,
+        R: RegisterHelper<G>,
+        K: KindHelper<Group = G, Register = R>,
+    > BlockBuilder<'a, K, G, R>
+{
+    /// add instruction to block
+    pub fn add(&mut self, kind: K, args: Vec<InstrId>) -> InstrId {
+        let instr_id = self.graph.new_instr(kind, args);
+        self.add_existing(instr_id);
+        instr_id
+    }
+
+    /// add existing instruction to block
+    pub fn add_existing(&mut self, instr_id: InstrId) {
+        assert!(!self.graph.get_instr(&instr_id).added);
+        self.graph.get_mut_instr(&instr_id).added = true;
+        self.graph.get_mut_instr(&instr_id).block = self.block;
+
+        let block = self.graph.get_mut_block(&self.block);
+        assert!(!block.ended);
+        block.instructions.push(instr_id);
+    }
+
+    /// add arg to existing instruction in block
+    pub fn add_arg(&mut self, id: InstrId, arg: InstrId) {
+        assert!(self.graph.get_instr(&id).block == self.block);
+        self.graph.get_mut_instr(&id).inputs.push(arg);
+    }
+
+    /// add phi movement to block
+    pub fn to_phi(&mut self, input: InstrId, phi: InstrId) {
+        let group = match self.graph.get_instr(&phi).kind {
+            InstrKind::Phi(ref group) => group.clone(),
+            _ => panic!("Expected Phi argument"),
+        };
+        let out = self.graph.get_instr(&phi).output.expect("Phi output");
+        let inp = self
+            .graph
+            .get_instr(&input)
+            .output
+            .expect("Phi input output");
+
+        // Insert one hint
+        if self.graph.get_interval(&out).hint.is_none() {
+            self.graph.get_mut_interval(&out).hint = Some(inp);
+        }
+
+        let res = Instruction::new_empty(self.graph, InstrKind::ToPhi(group), vec![input]);
+        self.graph.get_mut_instr(&res).output = Some(out);
+        self.add_existing(res);
+        self.graph.get_mut_instr(&phi).inputs.push(res);
+        assert!(self.graph.get_instr(&phi).inputs.len() <= 2);
+    }
+
+    /// end block
+    pub fn end(&mut self) {
+        let block = self.graph.get_mut_block(&self.block);
+        assert!(!block.ended);
+        assert!(block.instructions.len() > 0);
+        block.ended = true;
+    }
+
+    /// add `target_id` to block's successors
+    pub fn goto(&mut self, target_id: BlockId) {
+        self.graph
+            .get_mut_block(&self.block)
+            .add_successor(target_id);
+        self.graph
+            .get_mut_block(&target_id)
+            .add_predecessor(self.block);
+        self.end();
+    }
+
+    /// add `left` and `right` to block's successors
+    pub fn branch(&mut self, left: BlockId, right: BlockId) {
+        self.graph
+            .get_mut_block(&self.block)
+            .add_successor(left)
+            .add_successor(right);
+        self.graph.get_mut_block(&left).add_predecessor(self.block);
+        self.graph.get_mut_block(&right).add_predecessor(self.block);
+        self.end();
+    }
+
+    /// mark block as root
+    pub fn make_root(&mut self) {
+        self.graph.set_root(self.block);
+    }
+}
+
+pub struct BuildingGraph {
     block_id: usize,
+    root: Option<BlockId>,
+}
+
+pub struct FinishedGraph {
+    pub root: BlockId,
+}
+
+impl fmt::Debug for FinishedGraph {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "root: {:?}", self.root)
+    }
+}
+
+#[derive(Debug)]
+pub struct GraphFields<K, G, R> {
     pub instr_id: usize,
     interval_id: usize,
-    pub intervals: SmallIntMap<Interval<G, R>>,
-    pub blocks: SmallIntMap<Block>,
-    pub instructions: SmallIntMap<Instruction<K, G>>,
+    pub intervals: BTreeMap<IntervalId, Interval<G, R>>,
+    pub blocks: BTreeMap<BlockId, Block>,
+    pub instructions: BTreeMap<InstrId, Instruction<K, G>>,
     pub phis: Vec<InstrId>,
-    pub gaps: SmallIntMap<GapState>,
+    pub gaps: BTreeMap<InstrId, GapState>,
     pub prepared: bool,
+    /// Maps Group -> Register -> IntervalId.
     pub physical: SmallIntMap<SmallIntMap<IntervalId>>,
 }
+
+impl<K, G, R> GraphFields<K, G, R> {
+    pub fn new() -> Self {
+        Self {
+            instr_id: 0,
+            interval_id: 0,
+            intervals: BTreeMap::new(),
+            blocks: BTreeMap::new(),
+            instructions: BTreeMap::new(),
+            phis: vec![],
+            gaps: BTreeMap::new(),
+            prepared: false,
+            physical: SmallIntMap::new(),
+        }
+    }
+}
+
+pub trait GraphState {}
+impl GraphState for BuildingGraph {}
+impl GraphState for FinishedGraph {}
+
+#[derive(Debug)]
+pub struct GraphWithState<K, G, R, S: GraphState> {
+    pub fields: Box<GraphFields<K, G, R>>,
+    pub state: S,
+}
+
+impl<
+        K: KindHelper<Group = G, Register = R>,
+        G: GroupHelper<Register = R>,
+        R: RegisterHelper<G>,
+    > GraphWithState<K, G, R, BuildingGraph>
+{
+    pub fn new() -> Self {
+        Self {
+            fields: Box::new(GraphFields::new()),
+            state: BuildingGraph {
+                block_id: 0,
+                root: None,
+            },
+        }
+    }
+
+    // Instruction operations.
+
+    /// Create new instruction outside the block
+    pub fn new_instr(&mut self, kind: K, args: Vec<InstrId>) -> InstrId {
+        Instruction::new(self, InstrKind::User(kind), args)
+    }
+
+    /// Create phi value
+    pub fn phi(&mut self, group: G) -> InstrId {
+        let res = Instruction::new(self, InstrKind::Phi(group), vec![]);
+        // Prevent adding phi to block
+        self.get_mut_instr(&res).added = true;
+        self.fields.phis.push(res);
+        res
+    }
+
+    // Block operations.
+
+    /// Return the next block id.
+    #[inline(always)]
+    fn block_id(&mut self) -> BlockId {
+        let r = self.state.block_id;
+        self.state.block_id += 1;
+        BlockId(r)
+    }
+
+    /// Create empty block and initialize it in the block.
+    pub fn block(&mut self, body: impl Fn(&mut BlockBuilder<K, G, R>)) -> BlockId {
+        let block = Block::new(self);
+        let id = block.id;
+        self.fields.blocks.insert(id, block);
+        // Execute body.
+        self.with_block(id, body);
+        id
+    }
+
+    /// Perform operations on block.
+    pub fn with_block(&mut self, id: BlockId, body: impl Fn(&mut BlockBuilder<K, G, R>)) {
+        let mut b = BlockBuilder {
+            graph: self,
+            block: id,
+        };
+        body(&mut b);
+    }
+
+    /// Create an empty block.
+    pub fn empty_block(&mut self) -> BlockId {
+        let block = Block::new(self);
+        let id = block.id;
+        self.fields.blocks.insert(id, block);
+        id
+    }
+
+    /// Set graph's root block
+    fn set_root(&mut self, root_id: BlockId) {
+        assert!(self.state.root.is_none());
+        self.state.root = Some(root_id);
+    }
+
+    pub fn finish(self) -> Graph<K, G, R> {
+        Graph {
+            fields: self.fields,
+            state: FinishedGraph {
+                root: self.state.root.unwrap(),
+            },
+        }
+    }
+}
+
+// Functions common to both graph states.
+impl<K, G, R, S: GraphState> GraphWithState<K, G, R, S> {
+    /// Return the next instruction id.
+    #[inline(always)]
+    pub fn next_instr_id(&mut self) -> InstrId {
+        // TODO should be in the only constructable state?
+        let r = self.fields.instr_id;
+        self.fields.instr_id += 1;
+        InstrId(r)
+    }
+
+    /// Return the next interval id.
+    #[inline(always)]
+    fn interval_id(&mut self) -> IntervalId {
+        let r = self.fields.interval_id;
+        self.fields.interval_id += 1;
+        IntervalId(r)
+    }
+
+    /// Mutable instruction getter
+    pub fn get_mut_instr<'r>(&'r mut self, id: &InstrId) -> &'r mut Instruction<K, G> {
+        self.fields.instructions.get_mut(&id).unwrap()
+    }
+
+    pub fn get_instr<'r>(&'r self, id: &InstrId) -> &'r Instruction<K, G> {
+        self.fields.instructions.get(&id).unwrap()
+    }
+
+    /// Mutable block getter
+    pub fn get_mut_block<'r>(&'r mut self, id: &BlockId) -> &'r mut Block {
+        self.fields.blocks.get_mut(&id).unwrap()
+    }
+
+    pub fn get_interval<'r>(&'r self, id: &IntervalId) -> &'r Interval<G, R> {
+        self.fields.intervals.get(&id).unwrap()
+    }
+
+    /// Mutable interval getter
+    pub fn get_mut_interval<'r>(&'r mut self, id: &IntervalId) -> &'r mut Interval<G, R> {
+        self.fields.intervals.get_mut(&id).unwrap()
+    }
+}
+
+pub type GraphBuilder<K, G, R> = GraphWithState<K, G, R, BuildingGraph>;
+pub type Graph<K, G, R> = GraphWithState<K, G, R, FinishedGraph>;
 
 // Trait for all ids
 pub trait GraphId {
@@ -162,23 +431,6 @@ impl<
         K: KindHelper<Group = G, Register = R>,
     > Graph<K, G, R>
 {
-    /// Create new graph
-    pub fn new() -> Graph<K, G, R> {
-        Graph {
-            root: None,
-            block_id: 0,
-            instr_id: 0,
-            interval_id: 0,
-            intervals: SmallIntMap::new(),
-            blocks: SmallIntMap::new(),
-            instructions: SmallIntMap::new(),
-            phis: vec![],
-            gaps: SmallIntMap::new(),
-            prepared: false,
-            physical: SmallIntMap::new(),
-        }
-    }
-
     /// Create gap (internal)
     pub fn create_gap(&mut self, block: BlockId) -> Instruction<K, G> {
         let id = self.next_instr_id();
@@ -193,57 +445,35 @@ impl<
         };
     }
 
-    /// Mutable block getter
-    pub fn get_mut_block<'r>(&'r mut self, id: &BlockId) -> &'r mut Block {
-        self.blocks.get_mut(&id.to_uint()).unwrap()
-    }
-
     pub fn get_block<'r>(&'r self, id: &BlockId) -> &'r Block {
-        self.blocks.get(&id.to_uint()).unwrap()
+        self.fields.blocks.get(&id).unwrap()
     }
 
     /// Return ordered list of blocks
     pub fn get_block_list(&self) -> Vec<BlockId> {
         let mut blocks = vec![];
-        for (_, block) in self.blocks.iter() {
+        for (_, block) in self.fields.blocks.iter() {
             blocks.push(block.id);
         }
-        return blocks;
-    }
-
-    /// Mutable instruction getter
-    pub fn get_mut_instr<'r>(&'r mut self, id: &InstrId) -> &'r mut Instruction<K, G> {
-        self.instructions.get_mut(&id.to_uint()).unwrap()
-    }
-
-    pub fn get_instr<'r>(&'r self, id: &InstrId) -> &'r Instruction<K, G> {
-        self.instructions.get(&id.to_uint()).unwrap()
+        blocks
     }
 
     /// Instruction output getter
     pub fn get_output(&self, id: &InstrId) -> IntervalId {
-        self.instructions
-            .get(&id.to_uint())
+        self.fields
+            .instructions
+            .get(&id)
             .unwrap()
             .output
             .expect("Instruction output")
     }
 
-    /// Mutable interval getter
-    pub fn get_mut_interval<'r>(&'r mut self, id: &IntervalId) -> &'r mut Interval<G, R> {
-        self.intervals.get_mut(&id.to_uint()).unwrap()
-    }
-
-    pub fn get_interval<'r>(&'r self, id: &IntervalId) -> &'r Interval<G, R> {
-        self.intervals.get(&id.to_uint()).unwrap()
-    }
-
     /// Mutable gap state getter
     pub fn get_mut_gap<'r>(&'r mut self, id: &InstrId) -> &'r mut GapState {
-        if !self.gaps.contains_key(&id.to_uint()) {
-            self.gaps.insert(id.to_uint(), GapState { actions: vec![] });
+        if !self.fields.gaps.contains_key(&id) {
+            self.fields.gaps.insert(*id, GapState { actions: vec![] });
         }
-        self.gaps.get_mut(&id.to_uint()).unwrap()
+        self.fields.gaps.get_mut(&id).unwrap()
     }
 
     /// Find next intersection of two intervals
@@ -278,7 +508,7 @@ impl<
 
         let mut best_pos = end;
         let mut best_depth = usize::max_value();
-        for (_, block) in self.blocks.iter() {
+        for (_, block) in self.fields.blocks.iter() {
             if best_depth >= block.loop_depth {
                 let block_to = block.end();
 
@@ -453,30 +683,6 @@ impl<
     pub fn clobbers(&self, group: &G, pos: &InstrId) -> bool {
         return self.get_instr(pos).kind.clobbers(group);
     }
-
-    /// Return next block id, used at graph construction
-    #[inline(always)]
-    fn block_id(&mut self) -> BlockId {
-        let r = self.block_id;
-        self.block_id += 1;
-        return BlockId(r);
-    }
-
-    /// Return next instruction id, used at graph construction
-    #[inline(always)]
-    pub fn next_instr_id(&mut self) -> InstrId {
-        let r = self.instr_id;
-        self.instr_id += 1;
-        return InstrId(r);
-    }
-
-    /// Return next interval id, used at graph construction
-    #[inline(always)]
-    fn interval_id(&mut self) -> IntervalId {
-        let r = self.interval_id;
-        self.interval_id += 1;
-        return IntervalId(r);
-    }
 }
 
 impl Block {
@@ -486,7 +692,7 @@ impl Block {
         R: RegisterHelper<G>,
         K: KindHelper<Group = G, Register = R>,
     >(
-        graph: &mut Graph<K, G, R>,
+        graph: &mut GraphBuilder<K, G, R>,
     ) -> Block {
         Block {
             id: graph.block_id(),
@@ -526,7 +732,7 @@ impl<
 {
     /// Create instruction without output interval
     pub fn new_empty(
-        graph: &mut Graph<K, G, R>,
+        graph: &mut GraphBuilder<K, G, R>,
         kind: InstrKind<K, G>,
         args: Vec<InstrId>,
     ) -> InstrId {
@@ -546,12 +752,16 @@ impl<
             temporary: temporary,
             added: false,
         };
-        graph.instructions.insert(r.id.to_uint(), r);
+        graph.fields.instructions.insert(r.id, r);
         return id;
     }
 
     /// Create instruction with output
-    pub fn new(graph: &mut Graph<K, G, R>, kind: InstrKind<K, G>, args: Vec<InstrId>) -> InstrId {
+    pub fn new(
+        graph: &mut GraphBuilder<K, G, R>,
+        kind: InstrKind<K, G>,
+        args: Vec<InstrId>,
+    ) -> InstrId {
         let output = match kind.result_kind() {
             Some(k) => Some(Interval::new(graph, k.group())),
             None => None,
@@ -565,8 +775,8 @@ impl<
 
 impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> Interval<G, R> {
     /// Create new virtual interval
-    pub fn new<K: KindHelper<Group = G, Register = R>>(
-        graph: &mut Graph<K, G, R>,
+    pub fn new<K: KindHelper<Group = G, Register = R>, S: GraphState>(
+        graph: &mut GraphWithState<K, G, R, S>,
         group: G,
     ) -> IntervalId {
         let r = Interval {
@@ -580,7 +790,7 @@ impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> Interval<G, R> {
             fixed: false,
         };
         let id = r.id;
-        graph.intervals.insert(r.id.to_uint(), r);
+        graph.fields.intervals.insert(r.id, r);
         return id;
     }
 

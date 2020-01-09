@@ -60,9 +60,9 @@ fn nested_loops() {
 
     run_test(UintOrDouble::Uint(125), |g| {
         fn create_loop(
-            g: &mut Graph<Kind, Group, Register>,
+            g: &mut GraphBuilder<Kind, Group, Register>,
             inp: InstrId,
-            f: impl Fn(&mut Graph<Kind, Group, Register>, InstrId) -> Option<LoopResult>,
+            f: impl Fn(&mut GraphBuilder<Kind, Group, Register>, InstrId) -> Option<LoopResult>,
         ) -> Option<LoopResult> {
             let phi = g.phi(Group::Normal);
             let res_phi = g.phi(Group::Normal);

@@ -31,14 +31,14 @@ impl<
 {
     fn resolve_gaps(&mut self) {
         let mut keys = vec![];
-        for (id, _) in self.gaps.iter() {
-            keys.push(InstrId(*id));
+        for (id, _) in self.fields.gaps.iter() {
+            keys.push(*id);
         }
         for id in keys.iter() {
             let state = self.resolve_gap(id);
 
             // Overwrite previous state
-            self.gaps.insert(id.to_uint(), state);
+            self.fields.gaps.insert(*id, state);
         }
     }
 }
@@ -50,7 +50,7 @@ impl<
     > GapResolverHelper for Graph<K, G, R>
 {
     fn resolve_gap(&mut self, id: &InstrId) -> GapState {
-        let state = self.gaps.remove(&id.to_uint()).unwrap();
+        let state = self.fields.gaps.remove(&id).unwrap();
         let mut status = vec![MoveStatus::ToMove; state.actions.len()];
 
         let mut i = 0;

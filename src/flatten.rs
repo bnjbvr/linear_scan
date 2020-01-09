@@ -31,7 +31,7 @@ impl<
     > FlattenHelper for Graph<K, G, R>
 {
     fn flatten_get_ends(&mut self) -> BTreeMap<BlockId, Vec<BlockId>> {
-        let mut queue = vec![self.root.expect("Root block")];
+        let mut queue = vec![self.state.root];
         let mut visited = BitvSet::new();
         let mut ends: BTreeMap<BlockId, Vec<BlockId>> = BTreeMap::new();
 
@@ -119,11 +119,11 @@ impl<
         let mut mapping = BTreeMap::new();
 
         for id in list.iter() {
-            let mut block = self.blocks.remove(&id.to_uint()).expect("block");
+            let mut block = self.fields.blocks.remove(&id).expect("block");
 
             // Update root id
-            if block.id == self.root.expect("Root block") {
-                self.root = Some(BlockId(block_id));
+            if block.id == self.state.root {
+                self.state.root = BlockId(block_id);
             }
 
             mapping.insert(block.id, BlockId(block_id));
@@ -140,7 +140,7 @@ impl<
         }
 
         // Remove all other instructions
-        self.blocks.clear();
+        self.fields.blocks.clear();
 
         // Insert them again
         while let Some(mut block) = queue.pop() {
@@ -154,14 +154,14 @@ impl<
                 .iter()
                 .map(|pred| *mapping.get(&pred).expect("predecessor"))
                 .collect();
-            self.blocks.insert(block.id.to_uint(), block);
+            self.fields.blocks.insert(block.id, block);
         }
 
         result
     }
 
     fn flatten_reindex_instructions(&mut self, list: &[BlockId]) {
-        self.instr_id = 0;
+        self.fields.instr_id = 0;
         let mut queue = vec![];
         let mut map = BTreeMap::new();
 
@@ -175,7 +175,7 @@ impl<
 
             for (i, id) in list.iter().enumerate() {
                 // Pop each instruction from map
-                let mut instr = self.instructions.remove(&id.to_uint()).unwrap();
+                let mut instr = self.fields.instructions.remove(&id).unwrap();
 
                 // Insert mapping
                 let id = self.next_instr_id();
@@ -208,10 +208,11 @@ impl<
 
         // Add phis to queue
         let mut i = 0;
-        while i < self.phis.len() {
+        while i < self.fields.phis.len() {
             let mut phi = self
+                .fields
                 .instructions
-                .remove(&self.phis[i].to_uint())
+                .remove(&self.fields.phis[i])
                 .expect("Phi");
 
             // Insert mapping
@@ -227,7 +228,7 @@ impl<
         }
 
         // Remove all other instructions
-        self.instructions.clear();
+        self.fields.instructions.clear();
 
         // Replace graph's instruction map
         while queue.len() > 0 {
@@ -243,7 +244,7 @@ impl<
                 })
                 .collect();
 
-            self.instructions.insert(instr.id.to_uint(), instr);
+            self.fields.instructions.insert(instr.id, instr);
         }
     }
 }
@@ -257,7 +258,7 @@ impl<
     fn flatten(&mut self) {
         self.flatten_assign_indexes();
 
-        let mut queue = vec![self.root.expect("Root block")];
+        let mut queue = vec![self.state.root];
         let mut list = vec![];
         let mut visited = BitvSet::new();
 

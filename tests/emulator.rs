@@ -285,13 +285,18 @@ impl GeneratorFunctions<Kind, Group, Register> for Emulator {
     }
 }
 
-pub fn run_test(expected: UintOrDouble, mut body: impl FnMut(&mut Graph<Kind, Group, Register>)) {
+pub fn run_test(
+    expected: UintOrDouble,
+    mut body: impl FnMut(&mut GraphBuilder<Kind, Group, Register>),
+) {
     let _ = pretty_env_logger::try_init();
 
-    let mut g = Graph::new();
+    let mut g = GraphBuilder::new();
 
     body(&mut g);
-    debug!("Allocated graph: {:#?}", g);
+    let mut g = g.finish();
+
+    debug!("Generated graph: {:#?}", g);
 
     g.allocate().unwrap();
 

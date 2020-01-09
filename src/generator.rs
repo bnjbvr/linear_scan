@@ -52,7 +52,7 @@ impl<
         g.prelude();
 
         // Invoke functions in order of increasing instruction id
-        for (id, instr) in self.instructions.iter() {
+        for (id, instr) in self.fields.instructions.iter() {
             // Skip phis
             match instr.kind {
                 InstrKind::Phi(_) => continue,
@@ -61,7 +61,7 @@ impl<
 
             // Notify about block start
             let block = self.get_block(&instr.block);
-            if *id == block.start().to_uint() {
+            if *id == block.start() {
                 g.block(block.id);
             }
 
@@ -70,8 +70,8 @@ impl<
                 InstrKind::Gap => true,
                 _ => false,
             };
-            if is_gap || self.gaps.contains_key(id) {
-                self.generate_gap(g, &InstrId(*id));
+            if is_gap || self.fields.gaps.contains_key(id) {
+                self.generate_gap(g, id);
             }
 
             // Non-gap instructions
@@ -146,7 +146,7 @@ impl<
     > GeneratorHelper<K, GF> for Graph<K, G, R>
 {
     fn generate_gap(&self, g: &mut GF, id: &InstrId) {
-        match self.gaps.get(&id.to_uint()) {
+        match self.fields.gaps.get(&id) {
             Some(state) => {
                 for action in state.actions.iter() {
                     let from = self.get_interval(&action.from).value.clone();

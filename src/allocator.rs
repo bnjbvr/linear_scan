@@ -1,7 +1,9 @@
 use crate::compat::SmallIntMap;
 use crate::flatten::Flatten;
 use crate::gap::GapResolver;
-use crate::graph::{BlockId, Graph, InstrId, Interval, IntervalId, StackId, UseKind, Value};
+use crate::graph::{
+    BlockId, FinishedGraph, Graph, InstrId, Interval, IntervalId, StackId, UseKind, Value,
+};
 use crate::liveness::Liveness;
 use crate::{GroupHelper, KindHelper, RegisterHelper};
 
@@ -99,26 +101,29 @@ impl<
     > Allocator for Graph<K, G, R>
 {
     fn allocate(&mut self) -> Result<AllocatorResult, String> {
-        if !self.prepared {
+        if !self.fields.prepared {
             // Get flat list of blocks.
             self.flatten();
 
             // Build live_in/live_out.
             self.liveness_analysis();
 
-            self.prepared = true;
+            self.fields.prepared = true;
         }
 
         // Create physical fixed intervals
         let groups: Vec<G> = GroupHelper::groups();
         for group in groups.iter() {
-            self.physical.insert(group.to_uint(), SmallIntMap::new());
+            self.fields
+                .physical
+                .insert(group.to_uint(), SmallIntMap::new());
             let regs = group.registers();
             for reg in regs.iter() {
-                let interval = Interval::<G, R>::new::<K>(self, group.clone());
+                let interval = Interval::<G, R>::new::<K, FinishedGraph>(self, group.clone());
                 self.get_mut_interval(&interval).value = Value::RegisterVal(reg.clone());
                 self.get_mut_interval(&interval).fixed = true;
-                self.physical
+                self.fields
+                    .physical
                     .get_mut(&group.to_uint())
                     .unwrap()
                     .insert(reg.to_uint(), interval);
@@ -172,7 +177,7 @@ impl<
         };
 
         // We'll work with intervals that contain any ranges
-        for (_, interval) in self.intervals.iter() {
+        for (_, interval) in self.fields.intervals.iter() {
             if interval.value.group() == state.group && interval.ranges.len() > 0 {
                 if interval.fixed {
                     // Push all physical registers to active
@@ -644,7 +649,7 @@ impl<
     }
 
     fn build_ranges(&mut self, blocks: &[BlockId]) -> Result<(), String> {
-        let physical = self.physical.clone();
+        let physical = self.fields.physical.clone();
         for block_id in blocks.iter().rev() {
             let instructions = self.get_block(block_id).instructions.clone();
             let live_out = self.get_block(block_id).live_out.clone();
@@ -665,7 +670,9 @@ impl<
                 // Call instructions should swap out all used registers into stack slots
                 let groups: Vec<G> = GroupHelper::groups();
                 for group in groups.iter() {
-                    self.physical.insert(group.to_uint(), SmallIntMap::new());
+                    self.fields
+                        .physical
+                        .insert(group.to_uint(), SmallIntMap::new());
                     if instr.kind.clobbers(group) {
                         let regs = group.registers();
                         for reg in regs.iter() {
@@ -738,7 +745,7 @@ impl<
 
     fn split_fixed(&mut self) {
         let mut list = vec![];
-        for (_, interval) in self.intervals.iter() {
+        for (_, interval) in self.fields.intervals.iter() {
             if interval.uses.iter().any(|u| u.kind.is_fixed()) {
                 list.push(interval.id);
             }
@@ -763,7 +770,7 @@ impl<
 
     #[cfg(test)]
     fn verify(&self) {
-        for (_, interval) in self.intervals.iter() {
+        for (_, interval) in self.fields.intervals.iter() {
             if interval.ranges.len() > 0 {
                 // Every interval should have a non-virtual value
                 assert!(!interval.value.is_virtual());
