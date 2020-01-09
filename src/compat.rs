@@ -1,5 +1,7 @@
 use bit_set::BitSet;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
-pub type SmallIntMap<T> = HashMap<usize, T>;
+// This map must offer an iterator preserving the order of insertion.
+pub type SmallIntMap<T> = BTreeMap<usize, T>;
+
 pub type BitvSet = BitSet;
