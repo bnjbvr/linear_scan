@@ -9,6 +9,16 @@ pub struct AllocatorResult {
     _spill_count: Vec<usize>,
 }
 
+pub trait Allocator {
+    /// Allocate registers.
+    fn allocate(&mut self) -> Result<AllocatorResult, String>;
+}
+
+enum SplitConf {
+    Between(InstrId, InstrId),
+    At(InstrId),
+}
+
 struct GroupResult {
     spill_count: usize,
 }
@@ -21,19 +31,6 @@ struct AllocatorState<G, R> {
     unhandled: Vec<IntervalId>,
     active: Vec<IntervalId>,
     inactive: Vec<IntervalId>,
-}
-
-pub trait Allocator {
-    // Prepare for allocation
-    fn prepare(&mut self);
-
-    // Allocate registers
-    fn allocate(&mut self) -> Result<AllocatorResult, String>;
-}
-
-enum SplitConf {
-    Between(InstrId, InstrId),
-    At(InstrId),
 }
 
 trait AllocatorHelper<G: GroupHelper<Register = R>, R: RegisterHelper<G>> {
@@ -101,22 +98,16 @@ impl<
         K: KindHelper<Group = G, Register = R>,
     > Allocator for Graph<K, G, R>
 {
-    fn prepare(&mut self) {
-        if self.prepared {
-            return;
-        }
-
-        // Get flat list of blocks
-        self.flatten();
-
-        // Build live_in/live_out
-        self.liveness_analysis();
-
-        self.prepared = true;
-    }
-
     fn allocate(&mut self) -> Result<AllocatorResult, String> {
-        self.prepare();
+        if !self.prepared {
+            // Get flat list of blocks.
+            self.flatten();
+
+            // Build live_in/live_out.
+            self.liveness_analysis();
+
+            self.prepared = true;
+        }
 
         // Create physical fixed intervals
         let groups: Vec<G> = GroupHelper::groups();
@@ -233,7 +224,7 @@ impl<
 
             // Return handled spills
             for v in handled.iter() {
-                state.to_handled(v)
+                state.to_handled(v);
             }
 
             // Skip non-virtual intervals
@@ -246,9 +237,8 @@ impl<
             }
 
             // Push register interval to active
-            match self.get_interval(&current).value {
-                Value::RegisterVal(_) => state.active.push(current),
-                _ => (),
+            if self.get_interval(&current).value.is_register() {
+                state.active.push(current);
             }
         }
 

@@ -1,19 +1,22 @@
-use crate::compat::{BitvSet, SmallIntMap};
+use std::collections::BTreeMap;
+use std::iter::FromIterator;
+
+use crate::compat::BitvSet;
 use crate::graph::{BlockId, Graph};
 use crate::{GroupHelper, KindHelper, RegisterHelper};
 
 pub(crate) trait Flatten {
-    // Perform flatten itself
+    /// Perform flattening itself.
     fn flatten(&mut self);
 }
 
 trait FlattenHelper {
-    // Flatten CFG and detect/enumerate loops
-    //
-    // Get map: loop_start => [ loop ends ]
-    fn flatten_get_ends(&mut self) -> SmallIntMap<Vec<BlockId>>;
+    /// Flatten CFG and detect/enumerate loops.
+    ///
+    /// Get map: loop_start => [ loop ends ]
+    fn flatten_get_ends(&mut self) -> BTreeMap<BlockId, Vec<BlockId>>;
 
-    // Assign loop_index/loop_depth to each block
+    /// Assign loop_index/loop_depth to each block.
     fn flatten_assign_indexes(&mut self);
 
     // Assign new ids to blocks and instructions
@@ -27,23 +30,35 @@ impl<
         K: KindHelper<Group = G, Register = R>,
     > FlattenHelper for Graph<K, G, R>
 {
-    fn flatten_get_ends(&mut self) -> SmallIntMap<Vec<BlockId>> {
+    fn flatten_get_ends(&mut self) -> BTreeMap<BlockId, Vec<BlockId>> {
         let mut queue = vec![self.root.expect("Root block")];
         let mut visited = BitvSet::new();
-        let mut ends: SmallIntMap<Vec<BlockId>> = SmallIntMap::new();
+        let mut ends: BTreeMap<BlockId, Vec<BlockId>> = BTreeMap::new();
 
-        // Visit each block and find loop ends
+        // Visit each block and find loop ends.
         while queue.len() > 0 {
             let cur = queue.remove(0);
-            visited.insert(cur.to_uint());
+
+            // Don't visit the same node several times.
+            if !visited.insert(cur.to_uint()) {
+                continue;
+            }
+
             for succ in self.get_block(&cur).successors.iter() {
                 if visited.contains(succ.to_uint()) {
-                    // Loop detected
-                    if ends.contains_key(&succ.to_uint()) {
-                        ends.get_mut(&succ.to_uint()).unwrap().push(cur);
-                    } else {
-                        ends.insert(succ.to_uint(), vec![cur]);
-                    }
+                    // Loop detected!
+                    //
+                    // XXX Seems to be incorrect??
+                    // 1 -> 2 -> 7 <-------\
+                    //  \                  |
+                    //   \    /---------|  |
+                    //    \   |         |  |
+                    //     -> 3 -> 4 \  |  |
+                    //         \      6-----
+                    //          -> 5 /
+                    //
+                    // 7 will be detected as a loop header.
+                    ends.entry(*succ).or_default().push(cur);
                 } else {
                     queue.push(*succ);
                 }
@@ -55,40 +70,37 @@ impl<
 
     fn flatten_assign_indexes(&mut self) {
         let ends = self.flatten_get_ends();
+
         let mut loop_index = 1;
 
-        for (&start, ends) in ends.iter() {
-            let start_id = BlockId(start);
-            let mut visited = BitvSet::new();
-            let mut queue = vec![];
-            let expected_depth = self.get_block(&start_id).loop_depth;
-
-            // Decrement number of incoming forward branches
+        for (&start_id, ends) in ends.iter() {
+            // Decrement number of incoming forward branches.
             assert!(self.get_block(&start_id).incoming_forward_branches == 2);
             self.get_mut_block(&start_id).incoming_forward_branches -= 1;
 
-            for end in ends.iter() {
-                queue.push(*end);
-            }
+            // Fill the queue with all the backedge origins.
+            let mut queue = Vec::from_iter(ends.iter().cloned());
+            let expected_depth = self.get_block(&start_id).loop_depth;
+
+            let mut visited = BitvSet::new();
 
             while queue.len() > 0 {
                 let cur = queue.remove(0);
                 let block = self.get_mut_block(&cur);
 
-                // Skip visited blocks
+                // Skip visited blocks.
                 if !visited.insert(cur.to_uint()) {
                     continue;
                 }
 
-                // Set depth and index of not-visited-yet nodes,
-                // if we're not visiting nested loop
+                // Set depth and index of not-visited-yet nodes, if we're not visiting nested loop.
                 if block.loop_depth == expected_depth {
                     block.loop_index = loop_index;
                     block.loop_depth += 1;
                 }
 
-                // Enqueue predecessors if current is not a loop start
-                if cur.to_uint() != start {
+                // Enqueue predecessors if current is not a loop start.
+                if cur != start_id {
                     for pred in block.predecessors.iter() {
                         queue.push(*pred);
                     }
@@ -104,7 +116,7 @@ impl<
         let mut block_id = 0;
         let mut queue = vec![];
         let mut result = vec![];
-        let mut mapping = SmallIntMap::new();
+        let mut mapping = BTreeMap::new();
 
         for id in list.iter() {
             let mut block = self.blocks.remove(&id.to_uint()).expect("block");
@@ -114,7 +126,7 @@ impl<
                 self.root = Some(BlockId(block_id));
             }
 
-            mapping.insert(block.id.to_uint(), BlockId(block_id));
+            mapping.insert(block.id, BlockId(block_id));
             block.id = BlockId(block_id);
             block_id += 1;
 
@@ -135,12 +147,12 @@ impl<
             block.successors = block
                 .successors
                 .iter()
-                .map(|succ| *mapping.get(&succ.to_uint()).expect("successor"))
+                .map(|succ| *mapping.get(&succ).expect("successor"))
                 .collect();
             block.predecessors = block
                 .predecessors
                 .iter()
-                .map(|pred| *mapping.get(&pred.to_uint()).expect("predecessor"))
+                .map(|pred| *mapping.get(&pred).expect("predecessor"))
                 .collect();
             self.blocks.insert(block.id.to_uint(), block);
         }
@@ -151,7 +163,7 @@ impl<
     fn flatten_reindex_instructions(&mut self, list: &[BlockId]) {
         self.instr_id = 0;
         let mut queue = vec![];
-        let mut map = SmallIntMap::new();
+        let mut map = BTreeMap::new();
 
         // Go through blocks and map instructions
         for &block in list.iter() {
@@ -167,7 +179,7 @@ impl<
 
                 // Insert mapping
                 let id = self.next_instr_id();
-                map.insert(instr.id.to_uint(), id);
+                map.insert(instr.id, id);
 
                 // And update its id
                 instr.id = id;
@@ -204,7 +216,7 @@ impl<
 
             // Insert mapping
             let id = self.next_instr_id();
-            map.insert(phi.id.to_uint(), id);
+            map.insert(phi.id, id);
 
             // Update id
             phi.id = id;
@@ -225,7 +237,7 @@ impl<
             instr.inputs = instr
                 .inputs
                 .iter()
-                .map(|i| match map.get(&i.to_uint()) {
+                .map(|i| match map.get(&i) {
                     Some(r) => *r,
                     None => *i,
                 })

@@ -748,7 +748,19 @@ impl LiveRange {
 impl<G: GroupHelper<Register = R> + PartialEq, R: RegisterHelper<G>> Value<G, R> {
     pub fn is_virtual(&self) -> bool {
         match self {
-            &Value::VirtualVal(_) => true,
+            Value::VirtualVal(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_register(&self) -> bool {
+        match self {
+            Value::RegisterVal(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_stack(&self) -> bool {
+        match self {
+            Value::StackVal(_, _) => true,
             _ => false,
         }
     }
