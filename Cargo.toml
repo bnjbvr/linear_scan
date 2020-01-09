@@ -7,8 +7,13 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+getopts = "0.2.21"
 bit-set = "0.5.1"
 
 [lib]
 name = "linearscan"
 path = "src/linearscan.rs"
+
+[[bin]]
+name = "lsra"
+path = "bin/cli.rs"

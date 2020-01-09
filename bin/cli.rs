@@ -1,29 +1,22 @@
-extern mod extra;
+// TODO This does nothing yet! :)
 
-use extra::getopts::*;
-use std::os;
-use std::io;
-use linearscan::*;
+use getopts;
+use std::env;
 
-#[path="../src/linearscan.rs"]
-mod linearscan;
-
-fn print_usage(program: ~str) {
-  io::println(fmt!("Usage: %s [options] input.ls", program));
-  io::println(fmt!("-h, --help\tPrint this message"));
+fn print_usage(program: &str) {
+    println!("Usage: {} [options] input.ls", program);
+    println!("-h, --help\tPrint this message");
 }
 
 fn main() {
-  let args = os::args();
-  let program = args[0].clone();
+    let args = env::args().collect::<Vec<_>>();
+    let program = args[0].clone();
 
-  let opts = ~[
-    optflag("h"),
-    optflag("help")
-  ];
+    let mut opts = getopts::Options::new();
+    opts.optflag("h", "help", "displays help message");
 
-  let matches = getopts(args.tail(), opts).get();
-  if opt_present(&matches, "h") || opt_present(&matches, "help") {
-    return print_usage(program);
-  }
+    let matches = opts.parse(&args[1..]).expect("error parsing args");
+    if matches.opt_present("h") {
+        print_usage(&program);
+    }
 }
