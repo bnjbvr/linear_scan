@@ -29,6 +29,15 @@ define_entity!(InstrId, "i");
 define_entity!(IntervalId, "int");
 define_entity!(StackId, "s");
 
+impl InstrId {
+    pub fn prev(&self) -> InstrId {
+        InstrId(self.to_uint() - 1)
+    }
+    pub fn next(&self) -> InstrId {
+        InstrId(self.to_uint() + 1)
+    }
+}
+
 pub struct BlockBuilder<'graph, K, G, R> {
     graph: &'graph mut GraphBuilder<K, G, R>,
     block: BlockId,
@@ -124,6 +133,458 @@ impl<
     pub fn make_root(&mut self) {
         self.graph.set_root(self.block);
     }
+}
+
+#[derive(Debug)]
+pub struct Block {
+    pub id: BlockId,
+    pub instructions: Vec<InstrId>,
+    pub successors: Vec<BlockId>,
+    pub predecessors: Vec<BlockId>,
+
+    // Fields for flattener
+    pub loop_index: usize,
+    pub loop_depth: usize,
+    pub incoming_forward_branches: usize,
+
+    // Fields for liveness analysis
+    pub live_gen: BitvSet,
+    pub live_kill: BitvSet,
+    pub live_in: BitvSet,
+    pub live_out: BitvSet,
+
+    pub ended: bool,
+}
+
+impl Block {
+    /// Create new empty block
+    pub fn new<
+        G: GroupHelper<Register = R>,
+        R: RegisterHelper<G>,
+        K: KindHelper<Group = G, Register = R>,
+    >(
+        graph: &mut GraphBuilder<K, G, R>,
+    ) -> Block {
+        Block {
+            id: graph.block_id(),
+            instructions: vec![],
+            successors: vec![],
+            predecessors: vec![],
+            loop_index: 0,
+            loop_depth: 0,
+            incoming_forward_branches: 0,
+            live_gen: BitvSet::new(),
+            live_kill: BitvSet::new(),
+            live_in: BitvSet::new(),
+            live_out: BitvSet::new(),
+            ended: false,
+        }
+    }
+
+    pub fn add_successor<'r>(&'r mut self, succ: BlockId) -> &'r mut Block {
+        assert!(self.successors.len() <= 2);
+        self.successors.push(succ);
+        return self;
+    }
+
+    pub fn add_predecessor(&mut self, pred: BlockId) {
+        assert!(self.predecessors.len() <= 2);
+        self.predecessors.push(pred);
+        // NOTE: we'll decrease them later in flatten.rs
+        self.incoming_forward_branches += 1;
+    }
+
+    pub fn start(&self) -> InstrId {
+        assert!(self.instructions.len() != 0);
+        return *self.instructions.first().unwrap();
+    }
+
+    pub fn end(&self) -> InstrId {
+        assert!(self.instructions.len() != 0);
+        // TODO? could also be last().unwrap()+1, was last().next()
+        return *self.instructions.last().unwrap();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Instruction<K, G> {
+    pub id: InstrId,
+    pub block: BlockId,
+    pub kind: InstrKind<K, G>,
+    pub output: Option<IntervalId>,
+    pub inputs: Vec<InstrId>,
+    pub temporary: Vec<IntervalId>,
+    pub added: bool,
+}
+
+impl<
+        G: GroupHelper<Register = R>,
+        R: RegisterHelper<G>,
+        K: KindHelper<Group = G, Register = R>,
+    > Instruction<K, G>
+{
+    /// Create instruction without output interval
+    pub fn new_empty(
+        graph: &mut GraphBuilder<K, G, R>,
+        kind: InstrKind<K, G>,
+        args: Vec<InstrId>,
+    ) -> InstrId {
+        let id = graph.next_instr_id();
+
+        let mut temporary = vec![];
+        for group in kind.temporary().iter() {
+            temporary.push(Interval::new(graph, group.clone()));
+        }
+
+        let r = Instruction {
+            id: id,
+            block: BlockId(0), // NOTE: this will be overwritten soon
+            kind: kind,
+            output: None,
+            inputs: args.clone(),
+            temporary: temporary,
+            added: false,
+        };
+        graph.fields.instructions.insert(r.id, r);
+        return id;
+    }
+
+    /// Create instruction with output
+    pub fn new(
+        graph: &mut GraphBuilder<K, G, R>,
+        kind: InstrKind<K, G>,
+        args: Vec<InstrId>,
+    ) -> InstrId {
+        let output = match kind.result_kind() {
+            Some(k) => Some(Interval::new(graph, k.group())),
+            None => None,
+        };
+
+        let instr = Instruction::new_empty(graph, kind, args);
+        graph.get_mut_instr(&instr).output = output;
+        return instr;
+    }
+}
+
+// Abstraction to allow having user-specified instruction types
+// as well as internal movement instructions
+#[derive(Debug, Clone)]
+pub enum InstrKind<K, G> {
+    User(K),
+    Gap,
+    Phi(G),
+    ToPhi(G),
+}
+
+impl<
+        G: GroupHelper<Register = R>,
+        R: RegisterHelper<G>,
+        K: KindHelper<Group = G, Register = R>,
+    > KindHelper for InstrKind<K, G>
+{
+    type Group = G;
+    type Register = R;
+
+    /// Return true if instruction is clobbering registers
+    fn clobbers(&self, group: &G) -> bool {
+        match self {
+            &InstrKind::User(ref k) => k.clobbers(group),
+            &InstrKind::Gap => false,
+            &InstrKind::ToPhi(_) => false,
+            &InstrKind::Phi(_) => false,
+        }
+    }
+
+    /// Return count of instruction's temporary operands
+    fn temporary(&self) -> Vec<G> {
+        match self {
+            &InstrKind::User(ref k) => k.temporary(),
+            &InstrKind::Gap => vec![],
+            &InstrKind::Phi(_) => vec![],
+            &InstrKind::ToPhi(_) => vec![],
+        }
+    }
+
+    /// Return use kind of instruction's `i`th input
+    fn use_kind(&self, i: usize) -> UseKind<G, R> {
+        match self {
+            &InstrKind::User(ref k) => k.use_kind(i),
+            &InstrKind::Gap => panic!("Gap can't have any input"),
+            &InstrKind::Phi(ref g) => UseKind::UseAny(g.clone()),
+            &InstrKind::ToPhi(ref g) => UseKind::UseAny(g.clone()),
+        }
+    }
+
+    /// Return result kind of instruction or None, if instruction has no result
+    fn result_kind(&self) -> Option<UseKind<G, R>> {
+        match self {
+            &InstrKind::User(ref k) => k.result_kind(),
+            &InstrKind::Gap => None,
+            &InstrKind::Phi(ref g) => Some(UseKind::UseAny(g.clone())),
+            &InstrKind::ToPhi(ref g) => Some(UseKind::UseAny(g.clone())),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Interval<G, R> {
+    pub id: IntervalId,
+    pub value: Value<G, R>,
+    pub hint: Option<IntervalId>,
+    pub ranges: Vec<LiveRange>,
+    pub parent: Option<IntervalId>,
+    pub uses: Vec<Use<G, R>>,
+    children: Vec<IntervalId>,
+    pub fixed: bool,
+}
+
+impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> Interval<G, R> {
+    /// Create new virtual interval
+    pub fn new<K: KindHelper<Group = G, Register = R>, S: GraphState>(
+        graph: &mut GraphWithState<K, G, R, S>,
+        group: G,
+    ) -> IntervalId {
+        let r = Interval {
+            id: graph.interval_id(),
+            value: Value::VirtualVal(group),
+            hint: None,
+            ranges: vec![],
+            parent: None,
+            uses: vec![],
+            children: vec![],
+            fixed: false,
+        };
+        let id = r.id;
+        graph.fields.intervals.insert(r.id, r);
+        return id;
+    }
+
+    /// Add range to interval's live range list.
+    /// NOTE: Ranges are ordered by start position
+    pub fn add_range(&mut self, start: InstrId, end: InstrId) {
+        assert!(self.ranges.len() == 0 || self.ranges.first().unwrap().start >= end);
+
+        // Extend last range
+        if self.ranges.len() > 0 && self.ranges.first().unwrap().start == end {
+            self.ranges[0].start = start;
+        } else {
+            // Insert new range
+            self.ranges.insert(
+                0,
+                LiveRange {
+                    start: start,
+                    end: end,
+                },
+            );
+        }
+    }
+
+    /// Return mutable first range
+    pub fn first_range<'r>(&'r mut self) -> &'r mut LiveRange {
+        assert!(self.ranges.len() != 0);
+        return &mut self.ranges[0];
+    }
+
+    /// Return interval's start position
+    pub fn start(&self) -> InstrId {
+        assert!(self.ranges.len() != 0);
+        return self.ranges.first().unwrap().start;
+    }
+
+    /// Return interval's end position
+    pub fn end(&self) -> InstrId {
+        assert!(self.ranges.len() != 0);
+        return self.ranges.last().unwrap().end;
+    }
+
+    /// Return true if one of the ranges contains `pos`
+    pub fn covers(&self, pos: InstrId) -> bool {
+        return self.ranges.iter().any(|range| range.covers(pos));
+    }
+
+    /// Add use to the interval's use list.
+    /// NOTE: uses are ordered by increasing `pos`
+    pub fn add_use(&mut self, kind: UseKind<G, R>, pos: InstrId) {
+        assert!(
+            self.uses.len() == 0
+                || self.uses[0].pos > pos
+                || self.uses[0].kind.group() == kind.group()
+        );
+        self.uses.insert(
+            0,
+            Use {
+                kind: kind,
+                pos: pos,
+            },
+        );
+    }
+
+    /// Return next UseFixed(...) after `after` position.
+    pub fn next_fixed_use(&self, after: InstrId) -> Option<Use<G, R>> {
+        for u in self.uses.iter() {
+            match u.kind {
+                UseKind::UseFixed(_) if u.pos >= after => {
+                    return Some(u.clone());
+                }
+                _ => (),
+            }
+        }
+        return None;
+    }
+
+    /// Return next UseFixed(...) or UseRegister after `after` position.
+    pub fn next_use(&self, after: InstrId) -> Option<Use<G, R>> {
+        for u in self.uses.iter() {
+            if u.pos >= after && !u.kind.is_any() {
+                return Some(u.clone());
+            }
+        }
+        return None;
+    }
+
+    /// Return last UseFixed(...) or UseRegister before `before` position
+    pub fn last_use(&self, before: InstrId) -> Option<Use<G, R>> {
+        for u in self.uses.iter().rev() {
+            if u.pos <= before && !u.kind.is_any() {
+                return Some(u.clone());
+            }
+        }
+        return None;
+    }
+}
+
+#[derive(PartialEq, Eq, Clone)]
+pub enum Value<G, R> {
+    VirtualVal(G),
+    RegisterVal(R),
+    StackVal(G, StackId),
+}
+
+impl<G: GroupHelper<Register = R> + PartialEq, R: RegisterHelper<G>> Value<G, R> {
+    pub fn is_virtual(&self) -> bool {
+        match self {
+            Value::VirtualVal(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_register(&self) -> bool {
+        match self {
+            Value::RegisterVal(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_stack(&self) -> bool {
+        match self {
+            Value::StackVal(_, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn group(&self) -> G {
+        match self {
+            &Value::VirtualVal(ref g) => g.clone(),
+            &Value::RegisterVal(ref r) => r.group(),
+            &Value::StackVal(ref g, _) => g.clone(),
+        }
+    }
+}
+
+impl<G: fmt::Debug, R: fmt::Debug> fmt::Debug for Value<G, R> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Value::VirtualVal(group) => write!(fmt, "vreg({:?})", group),
+            Value::RegisterVal(reg) => write!(fmt, "reg({:?})", reg),
+            Value::StackVal(group, stack_id) => write!(fmt, "stack({:?}, {:?})", group, stack_id),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum UseKind<G, R> {
+    UseAny(G),
+    UseRegister(G),
+    UseFixed(R),
+}
+
+impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> UseKind<G, R> {
+    pub fn is_fixed(&self) -> bool {
+        match self {
+            &UseKind::UseFixed(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_any(&self) -> bool {
+        match self {
+            &UseKind::UseAny(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn group(&self) -> G {
+        match self {
+            &UseKind::UseRegister(ref g) => g.clone(),
+            &UseKind::UseAny(ref g) => g.clone(),
+            &UseKind::UseFixed(ref r) => r.group(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Use<G, R> {
+    pub kind: UseKind<G, R>,
+    pub pos: InstrId,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct LiveRange {
+    pub start: InstrId,
+    pub end: InstrId,
+}
+
+impl LiveRange {
+    /// Return true if range contains position
+    pub fn covers(&self, pos: InstrId) -> bool {
+        return self.start <= pos && pos < self.end;
+    }
+
+    /// Return first intersection position of two ranges
+    pub fn get_intersection(&self, other: &LiveRange) -> Option<InstrId> {
+        if self.covers(other.start) {
+            return Some(other.start);
+        } else if other.start < self.start && self.start < other.end {
+            return Some(self.start);
+        }
+        return None;
+    }
+}
+
+#[derive(Debug)]
+pub struct GapState {
+    pub actions: Vec<GapAction>,
+}
+
+impl GapState {
+    pub fn add_move(&mut self, from: &IntervalId, to: &IntervalId) {
+        self.actions.push(GapAction {
+            kind: GapActionKind::Move,
+            from: *from,
+            to: *to,
+        });
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum GapActionKind {
+    Move,
+    Swap,
+}
+
+#[derive(Debug, Clone)]
+pub struct GapAction {
+    pub kind: GapActionKind,
+    pub from: IntervalId,
+    pub to: IntervalId,
 }
 
 pub struct BuildingGraph {
@@ -311,119 +772,6 @@ impl<K, G, R, S: GraphState> GraphWithState<K, G, R, S> {
 
 pub type GraphBuilder<K, G, R> = GraphWithState<K, G, R, BuildingGraph>;
 pub type Graph<K, G, R> = GraphWithState<K, G, R, FinishedGraph>;
-
-// Trait for all ids
-pub trait GraphId {
-    fn to_uint(&self) -> usize;
-}
-
-#[derive(Debug)]
-pub struct Block {
-    pub id: BlockId,
-    pub instructions: Vec<InstrId>,
-    pub successors: Vec<BlockId>,
-    pub predecessors: Vec<BlockId>,
-
-    // Fields for flattener
-    pub loop_index: usize,
-    pub loop_depth: usize,
-    pub incoming_forward_branches: usize,
-
-    // Fields for liveness analysis
-    pub live_gen: BitvSet,
-    pub live_kill: BitvSet,
-    pub live_in: BitvSet,
-    pub live_out: BitvSet,
-
-    pub ended: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct Instruction<K, G> {
-    pub id: InstrId,
-    pub block: BlockId,
-    pub kind: InstrKind<K, G>,
-    pub output: Option<IntervalId>,
-    pub inputs: Vec<InstrId>,
-    pub temporary: Vec<IntervalId>,
-    pub added: bool,
-}
-
-// Abstraction to allow having user-specified instruction types
-// as well as internal movement instructions
-#[derive(Debug, Clone)]
-pub enum InstrKind<K, G> {
-    User(K),
-    Gap,
-    Phi(G),
-    ToPhi(G),
-}
-
-#[derive(Debug)]
-pub struct Interval<G, R> {
-    pub id: IntervalId,
-    pub value: Value<G, R>,
-    pub hint: Option<IntervalId>,
-    pub ranges: Vec<LiveRange>,
-    pub parent: Option<IntervalId>,
-    pub uses: Vec<Use<G, R>>,
-    children: Vec<IntervalId>,
-    pub fixed: bool,
-}
-
-#[derive(PartialEq, Eq, Clone)]
-pub enum Value<G, R> {
-    VirtualVal(G),
-    RegisterVal(R),
-    StackVal(G, StackId),
-}
-
-impl<G: fmt::Debug, R: fmt::Debug> fmt::Debug for Value<G, R> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Value::VirtualVal(group) => write!(fmt, "vreg({:?})", group),
-            Value::RegisterVal(reg) => write!(fmt, "reg({:?})", reg),
-            Value::StackVal(group, stack_id) => write!(fmt, "stack({:?}, {:?})", group, stack_id),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Use<G, R> {
-    pub kind: UseKind<G, R>,
-    pub pos: InstrId,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum UseKind<G, R> {
-    UseAny(G),
-    UseRegister(G),
-    UseFixed(R),
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct LiveRange {
-    pub start: InstrId,
-    pub end: InstrId,
-}
-
-#[derive(Debug)]
-pub struct GapState {
-    pub actions: Vec<GapAction>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum GapActionKind {
-    Move,
-    Swap,
-}
-
-#[derive(Debug, Clone)]
-pub struct GapAction {
-    pub kind: GapActionKind,
-    pub from: IntervalId,
-    pub to: IntervalId,
-}
 
 impl<
         G: GroupHelper<Register = R>,
@@ -682,393 +1030,5 @@ impl<
     /// register-clobbering call.
     pub fn clobbers(&self, group: &G, pos: &InstrId) -> bool {
         return self.get_instr(pos).kind.clobbers(group);
-    }
-}
-
-impl Block {
-    /// Create new empty block
-    pub fn new<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    >(
-        graph: &mut GraphBuilder<K, G, R>,
-    ) -> Block {
-        Block {
-            id: graph.block_id(),
-            instructions: vec![],
-            successors: vec![],
-            predecessors: vec![],
-            loop_index: 0,
-            loop_depth: 0,
-            incoming_forward_branches: 0,
-            live_gen: BitvSet::new(),
-            live_kill: BitvSet::new(),
-            live_in: BitvSet::new(),
-            live_out: BitvSet::new(),
-            ended: false,
-        }
-    }
-
-    pub fn add_successor<'r>(&'r mut self, succ: BlockId) -> &'r mut Block {
-        assert!(self.successors.len() <= 2);
-        self.successors.push(succ);
-        return self;
-    }
-
-    pub fn add_predecessor(&mut self, pred: BlockId) {
-        assert!(self.predecessors.len() <= 2);
-        self.predecessors.push(pred);
-        // NOTE: we'll decrease them later in flatten.rs
-        self.incoming_forward_branches += 1;
-    }
-}
-
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > Instruction<K, G>
-{
-    /// Create instruction without output interval
-    pub fn new_empty(
-        graph: &mut GraphBuilder<K, G, R>,
-        kind: InstrKind<K, G>,
-        args: Vec<InstrId>,
-    ) -> InstrId {
-        let id = graph.next_instr_id();
-
-        let mut temporary = vec![];
-        for group in kind.temporary().iter() {
-            temporary.push(Interval::new(graph, group.clone()));
-        }
-
-        let r = Instruction {
-            id: id,
-            block: BlockId(0), // NOTE: this will be overwritten soon
-            kind: kind,
-            output: None,
-            inputs: args.clone(),
-            temporary: temporary,
-            added: false,
-        };
-        graph.fields.instructions.insert(r.id, r);
-        return id;
-    }
-
-    /// Create instruction with output
-    pub fn new(
-        graph: &mut GraphBuilder<K, G, R>,
-        kind: InstrKind<K, G>,
-        args: Vec<InstrId>,
-    ) -> InstrId {
-        let output = match kind.result_kind() {
-            Some(k) => Some(Interval::new(graph, k.group())),
-            None => None,
-        };
-
-        let instr = Instruction::new_empty(graph, kind, args);
-        graph.get_mut_instr(&instr).output = output;
-        return instr;
-    }
-}
-
-impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> Interval<G, R> {
-    /// Create new virtual interval
-    pub fn new<K: KindHelper<Group = G, Register = R>, S: GraphState>(
-        graph: &mut GraphWithState<K, G, R, S>,
-        group: G,
-    ) -> IntervalId {
-        let r = Interval {
-            id: graph.interval_id(),
-            value: Value::VirtualVal(group),
-            hint: None,
-            ranges: vec![],
-            parent: None,
-            uses: vec![],
-            children: vec![],
-            fixed: false,
-        };
-        let id = r.id;
-        graph.fields.intervals.insert(r.id, r);
-        return id;
-    }
-
-    /// Add range to interval's live range list.
-    /// NOTE: Ranges are ordered by start position
-    pub fn add_range(&mut self, start: InstrId, end: InstrId) {
-        assert!(self.ranges.len() == 0 || self.ranges.first().unwrap().start >= end);
-
-        // Extend last range
-        if self.ranges.len() > 0 && self.ranges.first().unwrap().start == end {
-            self.ranges[0].start = start;
-        } else {
-            // Insert new range
-            self.ranges.insert(
-                0,
-                LiveRange {
-                    start: start,
-                    end: end,
-                },
-            );
-        }
-    }
-
-    /// Return mutable first range
-    pub fn first_range<'r>(&'r mut self) -> &'r mut LiveRange {
-        assert!(self.ranges.len() != 0);
-        return &mut self.ranges[0];
-    }
-
-    /// Return interval's start position
-    pub fn start(&self) -> InstrId {
-        assert!(self.ranges.len() != 0);
-        return self.ranges.first().unwrap().start;
-    }
-
-    /// Return interval's end position
-    pub fn end(&self) -> InstrId {
-        assert!(self.ranges.len() != 0);
-        return self.ranges.last().unwrap().end;
-    }
-
-    /// Return true if one of the ranges contains `pos`
-    pub fn covers(&self, pos: InstrId) -> bool {
-        return self.ranges.iter().any(|range| range.covers(pos));
-    }
-
-    /// Add use to the interval's use list.
-    /// NOTE: uses are ordered by increasing `pos`
-    pub fn add_use(&mut self, kind: UseKind<G, R>, pos: InstrId) {
-        assert!(
-            self.uses.len() == 0
-                || self.uses[0].pos > pos
-                || self.uses[0].kind.group() == kind.group()
-        );
-        self.uses.insert(
-            0,
-            Use {
-                kind: kind,
-                pos: pos,
-            },
-        );
-    }
-
-    /// Return next UseFixed(...) after `after` position.
-    pub fn next_fixed_use(&self, after: InstrId) -> Option<Use<G, R>> {
-        for u in self.uses.iter() {
-            match u.kind {
-                UseKind::UseFixed(_) if u.pos >= after => {
-                    return Some(u.clone());
-                }
-                _ => (),
-            }
-        }
-        return None;
-    }
-
-    /// Return next UseFixed(...) or UseRegister after `after` position.
-    pub fn next_use(&self, after: InstrId) -> Option<Use<G, R>> {
-        for u in self.uses.iter() {
-            if u.pos >= after && !u.kind.is_any() {
-                return Some(u.clone());
-            }
-        }
-        return None;
-    }
-
-    /// Return last UseFixed(...) or UseRegister before `before` position
-    pub fn last_use(&self, before: InstrId) -> Option<Use<G, R>> {
-        for u in self.uses.iter().rev() {
-            if u.pos <= before && !u.kind.is_any() {
-                return Some(u.clone());
-            }
-        }
-        return None;
-    }
-}
-
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > KindHelper for InstrKind<K, G>
-{
-    type Group = G;
-    type Register = R;
-
-    /// Return true if instruction is clobbering registers
-    fn clobbers(&self, group: &G) -> bool {
-        match self {
-            &InstrKind::User(ref k) => k.clobbers(group),
-            &InstrKind::Gap => false,
-            &InstrKind::ToPhi(_) => false,
-            &InstrKind::Phi(_) => false,
-        }
-    }
-
-    /// Return count of instruction's temporary operands
-    fn temporary(&self) -> Vec<G> {
-        match self {
-            &InstrKind::User(ref k) => k.temporary(),
-            &InstrKind::Gap => vec![],
-            &InstrKind::Phi(_) => vec![],
-            &InstrKind::ToPhi(_) => vec![],
-        }
-    }
-
-    /// Return use kind of instruction's `i`th input
-    fn use_kind(&self, i: usize) -> UseKind<G, R> {
-        match self {
-            &InstrKind::User(ref k) => k.use_kind(i),
-            &InstrKind::Gap => panic!("Gap can't have any input"),
-            &InstrKind::Phi(ref g) => UseKind::UseAny(g.clone()),
-            &InstrKind::ToPhi(ref g) => UseKind::UseAny(g.clone()),
-        }
-    }
-
-    /// Return result kind of instruction or None, if instruction has no result
-    fn result_kind(&self) -> Option<UseKind<G, R>> {
-        match self {
-            &InstrKind::User(ref k) => k.result_kind(),
-            &InstrKind::Gap => None,
-            &InstrKind::Phi(ref g) => Some(UseKind::UseAny(g.clone())),
-            &InstrKind::ToPhi(ref g) => Some(UseKind::UseAny(g.clone())),
-        }
-    }
-}
-
-impl LiveRange {
-    /// Return true if range contains position
-    pub fn covers(&self, pos: InstrId) -> bool {
-        return self.start <= pos && pos < self.end;
-    }
-
-    /// Return first intersection position of two ranges
-    pub fn get_intersection(&self, other: &LiveRange) -> Option<InstrId> {
-        if self.covers(other.start) {
-            return Some(other.start);
-        } else if other.start < self.start && self.start < other.end {
-            return Some(self.start);
-        }
-        return None;
-    }
-}
-
-impl<G: GroupHelper<Register = R> + PartialEq, R: RegisterHelper<G>> Value<G, R> {
-    pub fn is_virtual(&self) -> bool {
-        match self {
-            Value::VirtualVal(_) => true,
-            _ => false,
-        }
-    }
-    pub fn is_register(&self) -> bool {
-        match self {
-            Value::RegisterVal(_) => true,
-            _ => false,
-        }
-    }
-    pub fn is_stack(&self) -> bool {
-        match self {
-            Value::StackVal(_, _) => true,
-            _ => false,
-        }
-    }
-
-    pub fn group(&self) -> G {
-        match self {
-            &Value::VirtualVal(ref g) => g.clone(),
-            &Value::RegisterVal(ref r) => r.group(),
-            &Value::StackVal(ref g, _) => g.clone(),
-        }
-    }
-}
-
-impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> UseKind<G, R> {
-    pub fn is_fixed(&self) -> bool {
-        match self {
-            &UseKind::UseFixed(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_any(&self) -> bool {
-        match self {
-            &UseKind::UseAny(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn group(&self) -> G {
-        match self {
-            &UseKind::UseRegister(ref g) => g.clone(),
-            &UseKind::UseAny(ref g) => g.clone(),
-            &UseKind::UseFixed(ref r) => r.group(),
-        }
-    }
-}
-
-impl GapState {
-    pub fn add_move(&mut self, from: &IntervalId, to: &IntervalId) {
-        self.actions.push(GapAction {
-            kind: GapActionKind::Move,
-            from: *from,
-            to: *to,
-        });
-    }
-}
-
-impl Block {
-    pub fn start(&self) -> InstrId {
-        assert!(self.instructions.len() != 0);
-        return *self.instructions.first().unwrap();
-    }
-
-    pub fn end(&self) -> InstrId {
-        assert!(self.instructions.len() != 0);
-        // TODO? could also be last().unwrap()+1, was last().next()
-        return *self.instructions.last().unwrap();
-    }
-}
-
-// Implement trait for ids
-impl GraphId for BlockId {
-    fn to_uint(&self) -> usize {
-        match self {
-            &BlockId(id) => id,
-        }
-    }
-}
-
-impl GraphId for InstrId {
-    fn to_uint(&self) -> usize {
-        match self {
-            &InstrId(id) => id,
-        }
-    }
-}
-
-impl InstrId {
-    pub fn prev(&self) -> InstrId {
-        InstrId(self.to_uint() - 1)
-    }
-    pub fn next(&self) -> InstrId {
-        InstrId(self.to_uint() + 1)
-    }
-}
-
-impl GraphId for IntervalId {
-    fn to_uint(&self) -> usize {
-        match self {
-            &IntervalId(id) => id,
-        }
-    }
-}
-
-impl GraphId for StackId {
-    fn to_uint(&self) -> usize {
-        match self {
-            &StackId(id) => id,
-        }
     }
 }
