@@ -137,40 +137,27 @@ impl<
         let list = self.get_block_list();
 
         // Create live ranges
-        match self.build_ranges(&list) {
-            Ok(_) => {
-                let mut results = vec![];
-                // In each register group
-                for group in groups.iter() {
-                    // Walk intervals!
-                    match self.walk_intervals(group) {
-                        Ok(res) => {
-                            results.push(res);
-                        }
-                        Err(reason) => {
-                            return Err(reason);
-                        }
-                    }
-                }
-
-                // Add moves between blocks
-                self.resolve_data_flow(&list);
-
-                // Resolve parallel moves
-                self.resolve_gaps();
-
-                // Verify correctness of allocation
-                self.verify();
-
-                // Map results from each group to a general result
-                return Ok(AllocatorResult {
-                    _spill_count: results.iter().map(|result| result.spill_count).collect(),
-                });
-            }
-            Err(reason) => {
-                return Err(reason);
-            }
+        self.build_ranges(&list)?;
+        let mut results = vec![];
+        // In each register group
+        for group in groups.iter() {
+            // Walk intervals!
+            results.push(self.walk_intervals(group)?);
         }
+
+        // Add moves between blocks
+        self.resolve_data_flow(&list);
+
+        // Resolve parallel moves
+        self.resolve_gaps();
+
+        // Verify correctness of allocation
+        self.verify();
+
+        // Map results from each group to a general result
+        Ok(AllocatorResult {
+            _spill_count: results.iter().map(|result| result.spill_count).collect(),
+        })
     }
 }
 
@@ -254,12 +241,7 @@ impl<
                 // Allocate free register
                 if !self.allocate_free_reg(current, &mut state) {
                     // Or spill some active register
-                    match self.allocate_blocked_reg(current, &mut state) {
-                        Ok(_) => (),
-                        Err(err) => {
-                            return Err(err);
-                        }
-                    }
+                    self.allocate_blocked_reg(current, &mut state)?;
                 }
             }
 
@@ -270,9 +252,9 @@ impl<
             }
         }
 
-        return Ok(GroupResult {
+        Ok(GroupResult {
             spill_count: state.spill_count,
-        });
+        })
     }
 
     fn allocate_free_reg<'r>(
@@ -367,11 +349,8 @@ impl<
             let child = self.split(current, SplitConf::At(split_pos), state);
 
             // Fast case, spill child if there're no register uses after split
-            match self.get_interval(&child).next_use(InstrId(0)) {
-                None => {
-                    self.get_mut_interval(&child).value = state.get_spill();
-                }
-                _ => (),
+            if self.get_interval(&child).next_use(InstrId(0)).is_none() {
+                self.get_mut_interval(&child).value = state.get_spill();
             }
         }
 
@@ -379,7 +358,7 @@ impl<
         self.get_mut_interval(&current).value =
             Value::RegisterVal(RegisterHelper::from_uint(&state.group, reg));
 
-        return true;
+        true
     }
 
     fn allocate_blocked_reg<'r>(
@@ -515,7 +494,7 @@ impl<
                 self.get_mut_interval(&current).value = state.get_spill();
             }
         }
-        return Ok(());
+        Ok(())
     }
 
     fn iter_active<'r>(&'r self, state: &'r AllocatorState<G, R>) -> Vec<(&'r IntervalId, &'r R)> {
@@ -589,7 +568,7 @@ impl<
         let res = self.split_at(&current, split_pos);
         state.unhandled.push(res);
         self.sort_unhandled(state);
-        return res;
+        res
     }
 
     fn split_and_spill<'r>(&'r mut self, current: IntervalId, state: &'r mut AllocatorState<G, R>) {
@@ -764,7 +743,7 @@ impl<
         // Now split all intervals with fixed uses
         self.split_fixed();
 
-        return Ok(());
+        Ok(())
     }
 
     fn split_fixed(&mut self) {
@@ -827,13 +806,13 @@ impl<
 
 impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> AllocatorState<G, R> {
     fn get_spill(&mut self) -> Value<G, R> {
-        return if self.spills.len() > 0 {
+        if self.spills.len() > 0 {
             self.spills.remove(0)
         } else {
             let slot = self.spill_count;
             self.spill_count += 1;
             Value::StackVal(self.group.clone(), StackId(slot))
-        };
+        }
     }
 
     fn to_handled(&mut self, value: &Value<G, R>) {

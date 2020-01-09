@@ -50,7 +50,7 @@ impl<
             }
         }
 
-        return ends;
+        ends
     }
 
     fn flatten_assign_indexes(&mut self) {
@@ -131,8 +131,7 @@ impl<
         self.blocks.clear();
 
         // Insert them again
-        while queue.len() > 0 {
-            let mut block = queue.pop().unwrap();
+        while let Some(mut block) = queue.pop() {
             block.successors = block
                 .successors
                 .iter()
@@ -146,7 +145,7 @@ impl<
             self.blocks.insert(block.id.to_uint(), block);
         }
 
-        return result;
+        result
     }
 
     fn flatten_reindex_instructions(&mut self, list: &[BlockId]) {

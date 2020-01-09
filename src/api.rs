@@ -71,7 +71,7 @@ impl<
         let block = Block::new(self);
         let id = block.id;
         self.blocks.insert(id.to_uint(), block);
-        return id;
+        id
     }
 
     /// Create empty block and initialize it in the block
@@ -79,11 +79,9 @@ impl<
         let block = Block::new(self);
         let id = block.id;
         self.blocks.insert(id.to_uint(), block);
-
         // Execute body
         self.with_block(id, body);
-
-        return id;
+        id
     }
 
     /// Create phi value
@@ -92,7 +90,7 @@ impl<
         // Prevent adding phi to block
         self.get_mut_instr(&res).added = true;
         self.phis.push(res);
-        return res;
+        res
     }
 
     /// Perform operations on block
@@ -106,7 +104,7 @@ impl<
 
     /// Create new instruction outside the block
     fn new_instr(&mut self, kind: K, args: Vec<InstrId>) -> InstrId {
-        return Instruction::new(self, InstrKind::User(kind), args);
+        Instruction::new(self, InstrKind::User(kind), args)
     }
 
     /// Set graph's root block
@@ -126,7 +124,7 @@ impl<
     pub fn add(&mut self, kind: K, args: Vec<InstrId>) -> InstrId {
         let instr_id = self.graph.new_instr(kind, args);
         self.add_existing(instr_id);
-        return instr_id;
+        instr_id
     }
 
     /// add existing instruction to block
