@@ -1,43 +1,43 @@
-use crate::compat::{uint, BitvSet, SmallIntMap};
+use crate::compat::{BitvSet, SmallIntMap};
 use crate::{GroupHelper, KindHelper, RegisterHelper};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct BlockId(pub uint);
+pub struct BlockId(pub usize);
 impl BlockId {
-    pub fn to_uint(&self) -> uint {
+    pub fn to_uint(&self) -> usize {
         self.0
     }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct InstrId(pub uint);
+pub struct InstrId(pub usize);
 impl InstrId {
-    pub fn to_uint(&self) -> uint {
+    pub fn to_uint(&self) -> usize {
         self.0
     }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct IntervalId(pub uint);
+pub struct IntervalId(pub usize);
 impl IntervalId {
-    pub fn to_uint(&self) -> uint {
+    pub fn to_uint(&self) -> usize {
         self.0
     }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct StackId(pub uint);
+pub struct StackId(pub usize);
 impl StackId {
-    pub fn to_uint(&self) -> uint {
+    pub fn to_uint(&self) -> usize {
         self.0
     }
 }
 
 pub struct Graph<K, G, R> {
     pub root: Option<BlockId>,
-    block_id: uint,
-    pub instr_id: uint,
-    interval_id: uint,
+    block_id: usize,
+    pub instr_id: usize,
+    interval_id: usize,
     pub intervals: SmallIntMap<Interval<G, R>>,
     pub blocks: SmallIntMap<Block>,
     pub instructions: SmallIntMap<Instruction<K, G>>,
@@ -49,7 +49,7 @@ pub struct Graph<K, G, R> {
 
 // Trait for all ids
 pub trait GraphId {
-    fn to_uint(&self) -> uint;
+    fn to_uint(&self) -> usize;
 }
 
 pub struct Block {
@@ -59,9 +59,9 @@ pub struct Block {
     pub predecessors: Vec<BlockId>,
 
     // Fields for flattener
-    pub loop_index: uint,
-    pub loop_depth: uint,
-    pub incoming_forward_branches: uint,
+    pub loop_index: usize,
+    pub loop_depth: usize,
+    pub incoming_forward_branches: usize,
 
     // Fields for liveness analysis
     pub live_gen: BitvSet,
@@ -268,7 +268,7 @@ impl<
         }
 
         let mut best_pos = end;
-        let mut best_depth = uint::max_value();
+        let mut best_depth = usize::max_value();
         for (_, block) in self.blocks.iter() {
             if best_depth >= block.loop_depth {
                 let block_to = block.end();
@@ -699,7 +699,7 @@ impl<
     }
 
     /// Return use kind of instruction's `i`th input
-    fn use_kind(&self, i: uint) -> UseKind<G, R> {
+    fn use_kind(&self, i: usize) -> UseKind<G, R> {
         match self {
             &InstrKind::User(ref k) => k.use_kind(i),
             &InstrKind::Gap => panic!("Gap can't have any input"),
@@ -802,7 +802,7 @@ impl Block {
 
 // Implement trait for ids
 impl GraphId for BlockId {
-    fn to_uint(&self) -> uint {
+    fn to_uint(&self) -> usize {
         match self {
             &BlockId(id) => id,
         }
@@ -810,7 +810,7 @@ impl GraphId for BlockId {
 }
 
 impl GraphId for InstrId {
-    fn to_uint(&self) -> uint {
+    fn to_uint(&self) -> usize {
         match self {
             &InstrId(id) => id,
         }
@@ -827,7 +827,7 @@ impl InstrId {
 }
 
 impl GraphId for IntervalId {
-    fn to_uint(&self) -> uint {
+    fn to_uint(&self) -> usize {
         match self {
             &IntervalId(id) => id,
         }
@@ -835,7 +835,7 @@ impl GraphId for IntervalId {
 }
 
 impl GraphId for StackId {
-    fn to_uint(&self) -> uint {
+    fn to_uint(&self) -> usize {
         match self {
             &StackId(id) => id,
         }

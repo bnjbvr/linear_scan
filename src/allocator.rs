@@ -1,4 +1,4 @@
-use crate::compat::{uint, SmallIntMap};
+use crate::compat::SmallIntMap;
 use crate::flatten::Flatten;
 use crate::gap::GapResolver;
 use crate::graph::{BlockId, Graph, InstrId, Interval, IntervalId, StackId, UseKind, Value};
@@ -6,17 +6,17 @@ use crate::liveness::Liveness;
 use crate::{GroupAutoHelper, GroupHelper, KindHelper, RegisterHelper};
 
 pub struct AllocatorResult {
-    spill_count: Vec<uint>,
+    _spill_count: Vec<usize>,
 }
 
 struct GroupResult {
-    spill_count: uint,
+    spill_count: usize,
 }
 
 struct AllocatorState<G, R> {
     group: G,
-    register_count: uint,
-    spill_count: uint,
+    register_count: usize,
+    spill_count: usize,
     spills: Vec<Value<G, R>>,
     unhandled: Vec<IntervalId>,
     active: Vec<IntervalId>,
@@ -164,7 +164,7 @@ impl<
 
                 // Map results from each group to a general result
                 return Ok(AllocatorResult {
-                    spill_count: results.iter().map(|result| result.spill_count).collect(),
+                    _spill_count: results.iter().map(|result| result.spill_count).collect(),
                 });
             }
             Err(reason) => {
@@ -280,7 +280,7 @@ impl<
         current: IntervalId,
         state: &'r mut AllocatorState<G, R>,
     ) -> bool {
-        let mut free_pos = vec![uint::max_value(), state.register_count];
+        let mut free_pos = vec![usize::max_value(), state.register_count];
         let hint = self.get_hint(current);
 
         // All active intervals use registers
@@ -387,8 +387,8 @@ impl<
         current: IntervalId,
         state: &'r mut AllocatorState<G, R>,
     ) -> Result<(), String> {
-        let mut use_pos = vec![uint::max_value(), state.register_count];
-        let mut block_pos = vec![uint::max_value(), state.register_count];
+        let mut use_pos = vec![usize::max_value(), state.register_count];
+        let mut block_pos = vec![usize::max_value(), state.register_count];
         let start = self.get_interval(&current).start();
         let hint = self.get_hint(current);
 

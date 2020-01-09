@@ -1,8 +1,8 @@
 pub use crate::api::*;
 
-pub mod compat;
 mod allocator;
 mod api;
+pub mod compat;
 mod flatten;
 mod gap;
 mod generator;

@@ -1,4 +1,3 @@
-use crate::compat::uint;
 use crate::graph::{GapAction, GapActionKind, GapState, Graph, InstrId};
 use crate::*;
 
@@ -18,7 +17,7 @@ trait GapResolverHelper {
     fn move_one(
         &mut self,
         actions: &[GapAction],
-        i: uint,
+        i: usize,
         s: &mut [MoveStatus],
         result: &mut Vec<GapAction>,
     ) -> bool;
@@ -68,7 +67,7 @@ impl<
     fn move_one(
         &mut self,
         actions: &[GapAction],
-        i: uint,
+        i: usize,
         s: &mut [MoveStatus],
         result: &mut Vec<GapAction>,
     ) -> bool {

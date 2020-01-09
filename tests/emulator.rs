@@ -1,4 +1,4 @@
-use linearscan::compat::{uint, SmallIntMap};
+use linearscan::compat::SmallIntMap;
 use linearscan::*;
 
 #[derive(PartialEq, Debug, Clone)]
@@ -12,7 +12,7 @@ pub enum Kind {
     FixedUse,
     Nop,
     Print,
-    Number(uint),
+    Number(usize),
     DoubleNumber(f64),
     ToDouble,
     Return,
@@ -29,14 +29,14 @@ pub enum Group {
 // Registers
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Register {
-    rax,
-    rbx,
-    rcx,
-    rdx,
-    xmm1,
-    xmm2,
-    xmm3,
-    xmm4,
+    Rax,
+    Rbx,
+    Rcx,
+    Rdx,
+    Xmm1,
+    Xmm2,
+    Xmm3,
+    Xmm4,
 }
 
 impl GroupHelper for Group {
@@ -46,22 +46,22 @@ impl GroupHelper for Group {
     }
     fn registers(&self) -> Vec<Register> {
         match *self {
-            Group::Normal => vec![Register::rax, Register::rbx, Register::rcx, Register::rdx],
+            Group::Normal => vec![Register::Rax, Register::Rbx, Register::Rcx, Register::Rdx],
             Group::Double => vec![
-                Register::xmm1,
-                Register::xmm2,
-                Register::xmm3,
-                Register::xmm4,
+                Register::Xmm1,
+                Register::Xmm2,
+                Register::Xmm3,
+                Register::Xmm4,
             ],
         }
     }
-    fn to_uint(&self) -> uint {
+    fn to_uint(&self) -> usize {
         match self {
             Group::Normal => 0,
             Group::Double => 1,
         }
     }
-    fn from_uint(i: uint) -> Group {
+    fn from_uint(i: usize) -> Group {
         match i {
             0 => Group::Normal,
             1 => Group::Double,
@@ -73,44 +73,44 @@ impl GroupHelper for Group {
 impl RegisterHelper<Group> for Register {
     fn group(&self) -> Group {
         match *self {
-            Register::rax | Register::rbx | Register::rcx | Register::rdx => Group::Normal,
-            Register::xmm1 | Register::xmm2 | Register::xmm3 | Register::xmm4 => Group::Double,
+            Register::Rax | Register::Rbx | Register::Rcx | Register::Rdx => Group::Normal,
+            Register::Xmm1 | Register::Xmm2 | Register::Xmm3 | Register::Xmm4 => Group::Double,
         }
     }
 
-    fn to_uint(&self) -> uint {
+    fn to_uint(&self) -> usize {
         match self.group() {
             Group::Normal => match self {
-                Register::rax => 0,
-                Register::rbx => 1,
-                Register::rcx => 2,
-                Register::rdx => 3,
+                Register::Rax => 0,
+                Register::Rbx => 1,
+                Register::Rcx => 2,
+                Register::Rdx => 3,
                 _ => panic!(),
             },
             Group::Double => match self {
-                Register::xmm1 => 0,
-                Register::xmm2 => 1,
-                Register::xmm3 => 2,
-                Register::xmm4 => 3,
+                Register::Xmm1 => 0,
+                Register::Xmm2 => 1,
+                Register::Xmm3 => 2,
+                Register::Xmm4 => 3,
                 _ => panic!(),
             },
         }
     }
 
-    fn from_uint(g: &Group, i: uint) -> Register {
+    fn from_uint(g: &Group, i: usize) -> Register {
         match g {
             &Group::Normal => match i {
-                0 => Register::rax,
-                1 => Register::rbx,
-                2 => Register::rcx,
-                3 => Register::rdx,
+                0 => Register::Rax,
+                1 => Register::Rbx,
+                2 => Register::Rcx,
+                3 => Register::Rdx,
                 _ => panic!(),
             },
             &Group::Double => match i {
-                0 => Register::xmm1,
-                1 => Register::xmm2,
-                2 => Register::xmm3,
-                3 => Register::xmm4,
+                0 => Register::Xmm1,
+                1 => Register::Xmm2,
+                2 => Register::Xmm3,
+                3 => Register::Xmm4,
                 _ => panic!(),
             },
         }
@@ -135,17 +135,17 @@ impl KindHelper for Kind {
         }
     }
 
-    fn use_kind(&self, i: uint) -> UseKind<Group, Register> {
+    fn use_kind(&self, i: usize) -> UseKind<Group, Register> {
         match self {
-            &Kind::BranchIfBigger if i == 0 => Register::rcx.use_fixed(),
-            &Kind::JustUse => Register::rbx.use_fixed(),
+            &Kind::BranchIfBigger if i == 0 => Register::Rcx.use_fixed(),
+            &Kind::JustUse => Register::Rbx.use_fixed(),
             &Kind::FixedUse => {
                 let r: Register = RegisterHelper::from_uint(&Group::Normal, i);
                 r.use_fixed()
             }
-            &Kind::Print => Register::rdx.use_fixed(),
-            &Kind::Return => Register::rax.use_fixed(),
-            &Kind::ReturnDouble => Register::xmm1.use_fixed(),
+            &Kind::Print => Register::Rdx.use_fixed(),
+            &Kind::Return => Register::Rax.use_fixed(),
+            &Kind::ReturnDouble => Register::Xmm1.use_fixed(),
             &Kind::DoubleSum => Group::Double.use_reg(),
             &Kind::ToDouble => Group::Normal.use_reg(),
             _ => Group::Normal.use_any(),
@@ -170,12 +170,12 @@ impl KindHelper for Kind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UintOrDouble {
-    Uint(uint),
+    Uint(usize),
     Double(f64),
 }
 
 impl UintOrDouble {
-    fn unwrap_left(&self) -> uint {
+    fn unwrap_left(&self) -> usize {
         if let UintOrDouble::Uint(x) = self {
             *x
         } else {
@@ -206,13 +206,13 @@ impl UintOrDouble {
 }
 
 pub struct Emulator {
-    ip: uint,
+    ip: usize,
     instructions: Vec<Instruction>,
-    blocks: SmallIntMap<uint>,
+    blocks: SmallIntMap<usize>,
     result: Option<UintOrDouble>,
-    registers: SmallIntMap<uint>,
+    registers: SmallIntMap<usize>,
     double_registers: SmallIntMap<f64>,
-    stack: SmallIntMap<uint>,
+    stack: SmallIntMap<usize>,
     double_stack: SmallIntMap<f64>,
 }
 

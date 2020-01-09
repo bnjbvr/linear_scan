@@ -1,11 +1,6 @@
-use crate::compat::{uint, BitvSet, SmallIntMap};
+use crate::compat::{BitvSet, SmallIntMap};
 use crate::graph::{BlockId, Graph};
 use crate::{GroupHelper, KindHelper, RegisterHelper};
-
-struct MapResult {
-    block: BlockId,
-    score: uint,
-}
 
 pub trait Flatten {
     // Perform flatten itself

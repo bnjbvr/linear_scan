@@ -1,5 +1,4 @@
 // Private imports
-use crate::compat::uint;
 use crate::graph::{Block, InstrKind, Instruction};
 
 // Public API
@@ -16,14 +15,14 @@ pub trait GroupHelper: Clone + Eq {
     type Register;
     fn groups() -> Vec<Self>;
     fn registers(&self) -> Vec<Self::Register>;
-    fn to_uint(&self) -> uint;
-    fn from_uint(i: uint) -> Self;
+    fn to_uint(&self) -> usize;
+    fn from_uint(i: usize) -> Self;
 }
 
 pub trait RegisterHelper<Group>: Clone + Eq {
     fn group(&self) -> Group;
-    fn to_uint(&self) -> uint;
-    fn from_uint(g: &Group, i: uint) -> Self;
+    fn to_uint(&self) -> usize;
+    fn from_uint(g: &Group, i: usize) -> Self;
 }
 
 pub trait GroupAutoHelper<Register>: Sized {
@@ -40,7 +39,7 @@ pub trait KindHelper: Clone {
     type Register;
     fn clobbers(&self, group: &Self::Group) -> bool;
     fn temporary(&self) -> Vec<Self::Group>;
-    fn use_kind(&self, i: uint) -> UseKind<Self::Group, Self::Register>;
+    fn use_kind(&self, i: usize) -> UseKind<Self::Group, Self::Register>;
     fn result_kind(&self) -> Option<UseKind<Self::Group, Self::Register>>;
 }
 
