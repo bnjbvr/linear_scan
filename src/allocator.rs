@@ -280,7 +280,7 @@ impl<
         current: IntervalId,
         state: &'r mut AllocatorState<G, R>,
     ) -> bool {
-        let mut free_pos = vec![usize::max_value(), state.register_count];
+        let mut free_pos = vec![usize::max_value(); state.register_count];
         let hint = self.get_hint(current);
 
         // All active intervals use registers
@@ -387,8 +387,8 @@ impl<
         current: IntervalId,
         state: &'r mut AllocatorState<G, R>,
     ) -> Result<(), String> {
-        let mut use_pos = vec![usize::max_value(), state.register_count];
-        let mut block_pos = vec![usize::max_value(), state.register_count];
+        let mut use_pos = vec![usize::max_value(); state.register_count];
+        let mut block_pos = vec![usize::max_value(); state.register_count];
         let start = self.get_interval(&current).start();
         let hint = self.get_hint(current);
 
