@@ -2,7 +2,7 @@ use crate::compat::{BitvSet, SmallIntMap};
 use crate::graph::{BlockId, Graph};
 use crate::{GroupHelper, KindHelper, RegisterHelper};
 
-pub trait Flatten {
+pub(crate) trait Flatten {
     // Perform flatten itself
     fn flatten(&mut self);
 }
@@ -167,7 +167,7 @@ impl<
                 let mut instr = self.instructions.remove(&id.to_uint()).unwrap();
 
                 // Insert mapping
-                let id = self.instr_id();
+                let id = self.next_instr_id();
                 map.insert(instr.id.to_uint(), id);
 
                 // And update its id
@@ -204,7 +204,7 @@ impl<
                 .expect("Phi");
 
             // Insert mapping
-            let id = self.instr_id();
+            let id = self.next_instr_id();
             map.insert(phi.id.to_uint(), id);
 
             // Update id

@@ -3,7 +3,7 @@ use crate::flatten::Flatten;
 use crate::gap::GapResolver;
 use crate::graph::{BlockId, Graph, InstrId, Interval, IntervalId, StackId, UseKind, Value};
 use crate::liveness::Liveness;
-use crate::{GroupAutoHelper, GroupHelper, KindHelper, RegisterHelper};
+use crate::{GroupHelper, KindHelper, RegisterHelper};
 
 pub struct AllocatorResult {
     _spill_count: Vec<usize>,

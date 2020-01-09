@@ -1,6 +1,8 @@
 use linearscan::compat::SmallIntMap;
 use linearscan::*;
 
+use log::debug;
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum Kind {
     Increment,
@@ -216,7 +218,7 @@ pub struct Emulator {
     double_stack: SmallIntMap<f64>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum Instruction {
     Move(Value<Group, Register>, Value<Group, Register>),
     Swap(Value<Group, Register>, Value<Group, Register>),
@@ -226,7 +228,7 @@ enum Instruction {
     Generic(GenericInstruction),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct GenericInstruction {
     kind: Kind,
     output: Option<Value<Group, Register>>,
@@ -284,9 +286,12 @@ impl GeneratorFunctions<Kind, Group, Register> for Emulator {
 }
 
 pub fn run_test(expected: UintOrDouble, mut body: impl FnMut(&mut Graph<Kind, Group, Register>)) {
+    let _ = pretty_env_logger::try_init();
+
     let mut g = Graph::new();
 
     body(&mut g);
+    debug!("Allocated graph: {:#?}", g);
 
     g.allocate().unwrap();
 
@@ -313,15 +318,19 @@ impl Emulator {
 
     fn run(&mut self, graph: &Graph<Kind, Group, Register>) -> UintOrDouble {
         // Generate instructions
+        debug!("generating graph...");
         graph.generate(self);
 
         let instructions = self.instructions.clone();
+        debug!("emulator interpreter loop starting!");
         loop {
             // Execution finished
             if self.result.is_some() {
+                debug!("done with execution, returning result.");
                 return self.result.clone().unwrap();
             }
 
+            debug!("opcode: {:?}", instructions[self.ip]);
             match instructions[self.ip].clone() {
                 Instruction::UnexpectedEnd => panic!("This end was really unexpected"),
                 Instruction::Block(_) => {

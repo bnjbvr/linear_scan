@@ -13,25 +13,28 @@ pub struct BlockBuilder<'graph, K, G, R> {
 
 pub trait GroupHelper: Clone + Eq {
     type Register;
+
     fn groups() -> Vec<Self>;
     fn registers(&self) -> Vec<Self::Register>;
     fn to_uint(&self) -> usize;
     fn from_uint(i: usize) -> Self;
+
+    fn use_any(&self) -> UseKind<Self, Self::Register> {
+        UseKind::UseAny(self.clone())
+    }
+    fn use_reg(&self) -> UseKind<Self, Self::Register> {
+        UseKind::UseRegister(self.clone())
+    }
 }
 
 pub trait RegisterHelper<Group>: Clone + Eq {
     fn group(&self) -> Group;
     fn to_uint(&self) -> usize;
     fn from_uint(g: &Group, i: usize) -> Self;
-}
 
-pub trait GroupAutoHelper<Register>: Sized {
-    fn use_any(&self) -> UseKind<Self, Register>;
-    fn use_reg(&self) -> UseKind<Self, Register>;
-}
-
-pub trait RegisterAutoHelper<Group>: Sized {
-    fn use_fixed(&self) -> UseKind<Group, Self>;
+    fn use_fixed(&self) -> UseKind<Group, Self> {
+        UseKind::UseFixed(self.clone())
+    }
 }
 
 pub trait KindHelper: Clone {
@@ -55,21 +58,6 @@ pub trait GraphAPI<
     fn with_block(&mut self, id: BlockId, body: impl Fn(&mut BlockBuilder<K, G, R>));
     fn new_instr(&mut self, kind: K, args: Vec<InstrId>) -> InstrId;
     fn set_root(&mut self, id: BlockId);
-}
-
-impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> GroupAutoHelper<R> for G {
-    fn use_any(&self) -> UseKind<G, R> {
-        UseKind::UseAny(self.clone())
-    }
-    fn use_reg(&self) -> UseKind<G, R> {
-        UseKind::UseRegister(self.clone())
-    }
-}
-
-impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> RegisterAutoHelper<G> for R {
-    fn use_fixed(&self) -> UseKind<G, R> {
-        UseKind::UseFixed(self.clone())
-    }
 }
 
 impl<

@@ -9,6 +9,8 @@ edition = "2018"
 [dependencies]
 getopts = "0.2.21"
 bit-set = "0.5.1"
+pretty_env_logger = "0.3.1"
+log = "0.4.8"
 
 [lib]
 name = "linearscan"

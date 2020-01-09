@@ -1,38 +1,34 @@
 use crate::compat::{BitvSet, SmallIntMap};
 use crate::{GroupHelper, KindHelper, RegisterHelper};
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct BlockId(pub usize);
-impl BlockId {
-    pub fn to_uint(&self) -> usize {
-        self.0
-    }
+use std::fmt;
+
+macro_rules! define_entity {
+    ($name:ident, $short_name:literal) => {
+        #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+        pub struct $name(pub usize);
+
+        impl $name {
+            pub fn to_uint(&self) -> usize {
+                self.0
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+                write!(fmt, $short_name)?;
+                write!(fmt, "{}", self.0)
+            }
+        }
+    };
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct InstrId(pub usize);
-impl InstrId {
-    pub fn to_uint(&self) -> usize {
-        self.0
-    }
-}
+define_entity!(BlockId, "b");
+define_entity!(InstrId, "i");
+define_entity!(IntervalId, "int");
+define_entity!(StackId, "s");
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct IntervalId(pub usize);
-impl IntervalId {
-    pub fn to_uint(&self) -> usize {
-        self.0
-    }
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct StackId(pub usize);
-impl StackId {
-    pub fn to_uint(&self) -> usize {
-        self.0
-    }
-}
-
+#[derive(Debug)]
 pub struct Graph<K, G, R> {
     pub root: Option<BlockId>,
     block_id: usize,
@@ -52,6 +48,7 @@ pub trait GraphId {
     fn to_uint(&self) -> usize;
 }
 
+#[derive(Debug)]
 pub struct Block {
     pub id: BlockId,
     pub instructions: Vec<InstrId>,
@@ -72,7 +69,7 @@ pub struct Block {
     pub ended: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Instruction<K, G> {
     pub id: InstrId,
     pub block: BlockId,
@@ -93,6 +90,7 @@ pub enum InstrKind<K, G> {
     ToPhi(G),
 }
 
+#[derive(Debug)]
 pub struct Interval<G, R> {
     pub id: IntervalId,
     pub value: Value<G, R>,
@@ -111,36 +109,47 @@ pub enum Value<G, R> {
     StackVal(G, StackId),
 }
 
-#[derive(Clone)]
+impl<G: fmt::Debug, R: fmt::Debug> fmt::Debug for Value<G, R> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Value::VirtualVal(group) => write!(fmt, "vreg({:?})", group),
+            Value::RegisterVal(reg) => write!(fmt, "reg({:?})", reg),
+            Value::StackVal(group, stack_id) => write!(fmt, "stack({:?}, {:?})", group, stack_id),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Use<G, R> {
     pub kind: UseKind<G, R>,
     pub pos: InstrId,
 }
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum UseKind<G, R> {
     UseAny(G),
     UseRegister(G),
     UseFixed(R),
 }
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct LiveRange {
     pub start: InstrId,
     pub end: InstrId,
 }
 
+#[derive(Debug)]
 pub struct GapState {
     pub actions: Vec<GapAction>,
 }
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum GapActionKind {
     Move,
     Swap,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct GapAction {
     pub kind: GapActionKind,
     pub from: IntervalId,
@@ -172,7 +181,7 @@ impl<
 
     /// Create gap (internal)
     pub fn create_gap(&mut self, block: BlockId) -> Instruction<K, G> {
-        let id = self.instr_id();
+        let id = self.next_instr_id();
         return Instruction {
             id: id,
             block: block,
@@ -455,7 +464,7 @@ impl<
 
     /// Return next instruction id, used at graph construction
     #[inline(always)]
-    pub fn instr_id(&mut self) -> InstrId {
+    pub fn next_instr_id(&mut self) -> InstrId {
         let r = self.instr_id;
         self.instr_id += 1;
         return InstrId(r);
@@ -521,7 +530,7 @@ impl<
         kind: InstrKind<K, G>,
         args: Vec<InstrId>,
     ) -> InstrId {
-        let id = graph.instr_id();
+        let id = graph.next_instr_id();
 
         let mut temporary = vec![];
         for group in kind.temporary().iter() {

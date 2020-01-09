@@ -144,6 +144,20 @@ fn nested_loops() {
 }
 
 #[test]
+fn trivial() {
+    run_test(UintOrDouble::Uint(42), |g| {
+        g.block(|b| {
+            b.make_root();
+            let lhs = b.add(Kind::Number(20), vec![]);
+            let rhs = b.add(Kind::Number(22), vec![]);
+            let sum = b.add(Kind::Sum, vec![lhs, rhs]);
+            b.add(Kind::Return, vec![sum]);
+            b.end();
+        });
+    });
+}
+
+#[test]
 fn double_and_normal() {
     run_test(UintOrDouble::Double(286.875), |g| {
         g.block(|b| {

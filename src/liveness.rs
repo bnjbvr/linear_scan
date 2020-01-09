@@ -2,7 +2,7 @@ use crate::compat::BitvSet;
 use crate::graph::{BlockId, Graph};
 use crate::{GroupHelper, KindHelper, RegisterHelper};
 
-pub trait Liveness {
+pub(crate) trait Liveness {
     fn liveness_analysis(&mut self);
 }
 
