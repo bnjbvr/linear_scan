@@ -1,0 +1,14 @@
+[package]
+name = "linearscan"
+version = "0.1.0"
+authors = ["Benjamin Bouvier <public@benj.me>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bit-set = "0.5.1"
+
+[lib]
+name = "linearscan"
+path = "src/linearscan.rs"

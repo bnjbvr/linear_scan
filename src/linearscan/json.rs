@@ -1,7 +1,9 @@
+// TODO only used in testing
+/*
 use extra::json::{ToJson, Json, Object, List, String, Number, Boolean, Null};
-use std::hashmap::HashMap;
-use linearscan::{KindHelper, GroupHelper, RegisterHelper};
-use linearscan::graph::{Graph, Block, Instruction, Interval, LiveRange,
+use std::collections::HashMap;
+use crate::{KindHelper, GroupHelper, RegisterHelper};
+use crate::graph::{Graph, Block, Instruction, Interval, LiveRange,
                         User, Gap, GapState, Move, Swap, ToPhi, Phi,
                         Use, UseAny, UseRegister, UseFixed,
                         Value, VirtualVal, RegisterVal, StackVal};
@@ -214,3 +216,4 @@ impl<G: GroupHelper<R>+ToStr,
     return result.to_json();
   }
 }
+*/

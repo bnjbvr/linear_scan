@@ -1,113 +1,124 @@
-use std::vec;
-use linearscan::*;
-use linearscan::graph::{Graph, InstrId, GapState, GapAction,
-                        Move, Swap};
+use crate::compat::uint;
+use crate::graph::{GapAction, GapActionKind, GapState, Graph, InstrId};
+use crate::*;
 
-#[deriving(Eq)]
+#[derive(PartialEq, Clone, Eq)]
 enum MoveStatus {
-  ToMove,
-  Moving,
-  Moved
+    ToMove,
+    Moving,
+    Moved,
 }
 
 pub trait GapResolver {
-  fn resolve_gaps(&mut self);
+    fn resolve_gaps(&mut self);
 }
 
 trait GapResolverHelper {
-  fn resolve_gap(&mut self, id: &InstrId) -> ~GapState;
-  fn move_one(&mut self,
-              actions: &[GapAction],
-              i: uint,
-              s: &mut [MoveStatus],
-              result: &mut ~[GapAction]) -> bool;
+    fn resolve_gap(&mut self, id: &InstrId) -> GapState;
+    fn move_one(
+        &mut self,
+        actions: &[GapAction],
+        i: uint,
+        s: &mut [MoveStatus],
+        result: &mut Vec<GapAction>,
+    ) -> bool;
 }
 
-impl<G: GroupHelper<R>,
-     R: RegisterHelper<G>,
-     K: KindHelper<G, R>+Clone> GapResolver for Graph<K, G, R> {
-  fn resolve_gaps(&mut self) {
-    let mut keys = ~[];
-    for (id, _) in self.gaps.iter() {
-      keys.push(InstrId(*id));
-    }
-    for id in keys.iter() {
-      let state = self.resolve_gap(id);
-
-      // Overwrite previous state
-      self.gaps.insert(id.to_uint(), state);
-    }
-  }
-}
-
-impl<G: GroupHelper<R>,
-     R: RegisterHelper<G>,
-     K: KindHelper<G, R>+Clone> GapResolverHelper for Graph<K, G, R> {
-  fn resolve_gap(&mut self, id: &InstrId) -> ~GapState {
-    let state = self.gaps.pop(&id.to_uint()).unwrap();
-    let mut status = vec::from_elem(state.actions.len(), ToMove);
-
-    let mut i = 0;
-    let mut result = ~[];
-    while i < state.actions.len() {
-      if status[i] == ToMove {
-        self.move_one(state.actions, i, status, &mut result);
-      }
-      i += 1;
-    }
-    ~GapState { actions: result }
-  }
-
-  fn move_one(&mut self,
-              actions: &[GapAction],
-              i: uint,
-              s: &mut [MoveStatus],
-              result: &mut ~[GapAction]) -> bool {
-    assert!(actions[i].kind == Move);
-    let from = self.get_interval(&actions[i].from).value.clone();
-    let to = self.get_interval(&actions[i].to).value.clone();
-
-    // Ignore nop moves
-    if from == to { return false; }
-
-    s[i] = Moving;
-    let mut j = 0;
-    let mut circular = false;
-    let mut sentinel = false;
-    while j < actions.len() {
-      assert!(actions[j].kind == Move);
-      let other_from = self.get_interval(&actions[j].from).value.clone();
-
-      if other_from == to {
-        match s[j] {
-          ToMove => {
-            let r = self.move_one(actions, j, s, result);
-            if r {
-              assert!(!circular);
-              circular = true;
-            }
-          },
-          Moving => {
-            sentinel = true;
-          },
-          Moved => ()
+impl<
+        G: GroupHelper<Register = R>,
+        R: RegisterHelper<G>,
+        K: KindHelper<Group = G, Register = R> + Clone,
+    > GapResolver for Graph<K, G, R>
+{
+    fn resolve_gaps(&mut self) {
+        let mut keys = vec![];
+        for (id, _) in self.gaps.iter() {
+            keys.push(InstrId(*id));
         }
-      }
+        for id in keys.iter() {
+            let state = self.resolve_gap(id);
 
-      j += 1;
+            // Overwrite previous state
+            self.gaps.insert(id.to_uint(), state);
+        }
+    }
+}
+
+impl<
+        G: GroupHelper<Register = R>,
+        R: RegisterHelper<G>,
+        K: KindHelper<Group = G, Register = R> + Clone,
+    > GapResolverHelper for Graph<K, G, R>
+{
+    fn resolve_gap(&mut self, id: &InstrId) -> GapState {
+        let state = self.gaps.remove(&id.to_uint()).unwrap();
+        let mut status = vec![MoveStatus::ToMove; state.actions.len()];
+
+        let mut i = 0;
+        let mut result = vec![];
+        while i < state.actions.len() {
+            if status[i] == MoveStatus::ToMove {
+                self.move_one(&state.actions, i, &mut status, &mut result);
+            }
+            i += 1;
+        }
+        GapState { actions: result }
     }
 
-    if circular {
-      result.push(GapAction {
-        kind: Swap,
-        from: actions[i].from,
-        to: actions[i].to
-      });
-    } else if !sentinel {
-      result.push(actions[i].clone());
-    }
-    s[i] = Moved;
+    fn move_one(
+        &mut self,
+        actions: &[GapAction],
+        i: uint,
+        s: &mut [MoveStatus],
+        result: &mut Vec<GapAction>,
+    ) -> bool {
+        assert!(actions[i].kind == GapActionKind::Move);
+        let from = self.get_interval(&actions[i].from).value.clone();
+        let to = self.get_interval(&actions[i].to).value.clone();
 
-    return circular || sentinel;
-  }
+        // Ignore nop moves
+        if from == to {
+            return false;
+        }
+
+        s[i] = MoveStatus::Moving;
+        let mut j = 0;
+        let mut circular = false;
+        let mut sentinel = false;
+        while j < actions.len() {
+            assert!(actions[j].kind == GapActionKind::Move);
+            let other_from = self.get_interval(&actions[j].from).value.clone();
+
+            if other_from == to {
+                match &s[j] {
+                    MoveStatus::ToMove => {
+                        let r = self.move_one(actions, j, s, result);
+                        if r {
+                            assert!(!circular);
+                            circular = true;
+                        }
+                    }
+                    MoveStatus::Moving => {
+                        sentinel = true;
+                    }
+                    MoveStatus::Moved => (),
+                }
+            }
+
+            j += 1;
+        }
+
+        if circular {
+            result.push(GapAction {
+                kind: GapActionKind::Swap,
+                from: actions[i].from,
+                to: actions[i].to,
+            });
+        } else if !sentinel {
+            result.push(actions[i].clone());
+        }
+        s[i] = MoveStatus::Moved;
+
+        return circular || sentinel;
+    }
 }

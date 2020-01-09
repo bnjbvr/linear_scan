@@ -34,13 +34,13 @@ pub enum Register {
 }
 
 impl GroupHelper<Register> for Group {
-  fn groups() -> ~[Group] {
-    ~[Normal, Double]
+  fn groups() -> Vec<Group> {
+    vec![Group::Normal, Group::Double]
   }
-  fn registers(&self) -> ~[Register] {
+  fn registers(&self) -> Vec<Register> {
     match *self {
-      Normal => ~[rax, rbx, rcx, rdx],
-      Double => ~[xmm1, xmm2, xmm3, xmm4]
+      Normal => vec![rax, rbx, rcx, rdx],
+      Double => vec![xmm1, xmm2, xmm3, xmm4]
     }
   }
   fn to_uint(&self) -> uint { *self as uint }

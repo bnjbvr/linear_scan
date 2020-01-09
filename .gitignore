@@ -2,3 +2,12 @@
 /run-tests.dSYM
 /linearscan
 /linearscan.dSYM
+
+
+#Added by cargo
+#
+#already existing elements are commented out
+
+/target
+**/*.rs.bk
+Cargo.lock
