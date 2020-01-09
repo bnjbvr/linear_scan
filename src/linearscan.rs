@@ -1,7 +1,7 @@
 pub use crate::api::*;
 
 #[path = "linearscan/compat.rs"]
-mod compat;
+pub mod compat;
 
 #[path = "linearscan/allocator.rs"]
 mod allocator;

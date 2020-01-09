@@ -7,7 +7,7 @@ pub use crate::allocator::Allocator;
 pub use crate::generator::{Generator, GeneratorFunctions};
 pub use crate::graph::{BlockId, Graph, InstrId, StackId, UseKind, Value};
 
-struct BlockBuilder<'graph, K, G, R> {
+pub struct BlockBuilder<'graph, K, G, R> {
     graph: &'graph mut Graph<K, G, R>,
     block: BlockId,
 }
@@ -51,9 +51,9 @@ pub trait GraphAPI<
 >
 {
     fn empty_block(&mut self) -> BlockId;
-    fn block(&mut self, body: &fn(b: &mut BlockBuilder<K, G, R>)) -> BlockId;
+    fn block(&mut self, body: impl Fn(&mut BlockBuilder<K, G, R>)) -> BlockId;
     fn phi(&mut self, group: G) -> InstrId;
-    fn with_block(&mut self, id: BlockId, body: &fn(b: &mut BlockBuilder<K, G, R>));
+    fn with_block(&mut self, id: BlockId, body: impl Fn(&mut BlockBuilder<K, G, R>));
     fn new_instr(&mut self, kind: K, args: Vec<InstrId>) -> InstrId;
     fn set_root(&mut self, id: BlockId);
 }
@@ -88,7 +88,7 @@ impl<
     }
 
     /// Create empty block and initialize it in the block
-    fn block(&mut self, body: &fn(b: &mut BlockBuilder<K, G, R>)) -> BlockId {
+    fn block(&mut self, body: impl Fn(&mut BlockBuilder<K, G, R>)) -> BlockId {
         let block = Block::new(self);
         let id = block.id;
         self.blocks.insert(id.to_uint(), block);
@@ -109,7 +109,7 @@ impl<
     }
 
     /// Perform operations on block
-    fn with_block(&mut self, id: BlockId, body: &fn(b: &mut BlockBuilder<K, G, R>)) {
+    fn with_block(&mut self, id: BlockId, body: impl Fn(&mut BlockBuilder<K, G, R>)) {
         let mut b = BlockBuilder {
             graph: self,
             block: id,
