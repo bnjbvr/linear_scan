@@ -29,7 +29,10 @@ struct AllocatorState<G, R> {
     reg_class: G,
     register_count: usize,
     spill_count: usize,
+
+    /// Free list for spills.
     spills: Vec<Value<G, R>>,
+
     unhandled: Vec<IntervalId>,
     active: Vec<IntervalId>,
     inactive: Vec<IntervalId>,
@@ -191,13 +194,16 @@ impl<
             let mut handled = vec![];
             let mut push_to_inactive = vec![];
             state.active.retain(|id| {
-                if self.get_interval(id).covers(position) {
+                let interval = self.get_interval(id);
+                if interval.covers(position) {
                     true
                 } else {
-                    if position <= self.get_interval(id).end() {
+                    if position <= interval.end() {
                         push_to_inactive.push(*id);
                     }
-                    handled.push(self.get_interval(id).value.clone());
+                    if interval.value.is_stack() {
+                        handled.push(interval.value.clone());
+                    }
                     false
                 }
             });
@@ -208,21 +214,24 @@ impl<
             // inactive => active or handled
             let mut push_to_active = vec![];
             state.inactive.retain(|id| {
-                if self.get_interval(id).covers(position) {
+                let interval = self.get_interval(id);
+                if interval.covers(position) {
                     push_to_active.push(*id);
-                    handled.push(self.get_interval(id).value.clone());
+                    if interval.value.is_stack() {
+                        handled.push(interval.value.clone());
+                    }
                     false
                 } else {
-                    position < self.get_interval(id).end()
+                    position < interval.end()
                 }
             });
             for active in push_to_active {
                 state.active.push(active);
             }
 
-            // Return handled spills
+            // Return free spills.
             for v in handled.iter() {
-                state.to_handled(v);
+                state.collect_free_spill(v);
             }
 
             // Skip non-virtual intervals
@@ -356,6 +365,7 @@ impl<
     ) -> Result<(), String> {
         let mut use_pos = vec![usize::max_value(); state.register_count];
         let mut block_pos = vec![usize::max_value(); state.register_count];
+
         let start = self.get_interval(&current).start();
         let hint = self.get_hint(current);
 
@@ -761,8 +771,8 @@ impl<
         }
     }
 
-    #[cfg(test)]
     fn verify(&self) {
+        #[cfg(test)]
         for (_, interval) in self.fields.intervals.iter() {
             if interval.ranges.len() > 0 {
                 // Every interval should have a non-virtual value
@@ -788,10 +798,6 @@ impl<
             }
         }
     }
-    #[cfg(not(test))]
-    fn verify(&self) {
-        // Production mode, no verification
-    }
 }
 
 impl<G: RegClass<Register = R>, R: Register<G>> AllocatorState<G, R> {
@@ -805,12 +811,12 @@ impl<G: RegClass<Register = R>, R: Register<G>> AllocatorState<G, R> {
         }
     }
 
-    fn to_handled(&mut self, value: &Value<G, R>) {
+    fn collect_free_spill(&mut self, value: &Value<G, R>) {
         match value {
             &Value::StackVal(ref reg_class, slot) => {
                 self.spills.push(Value::StackVal(reg_class.clone(), slot))
             }
-            _ => (),
+            _ => panic!("expected a stack value"),
         }
     }
 }

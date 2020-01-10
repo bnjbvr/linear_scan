@@ -549,7 +549,8 @@ impl LiveRange {
     pub fn get_intersection(&self, other: &LiveRange) -> Option<InstrId> {
         if self.covers(other.start) {
             return Some(other.start);
-        } else if other.start < self.start && self.start < other.end {
+        }
+        if other.start < self.start && self.start < other.end {
             return Some(self.start);
         }
         return None;
@@ -820,9 +821,8 @@ impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register =
 
         for a in int_a.ranges.iter() {
             for b in int_b.ranges.iter() {
-                match a.get_intersection(b) {
-                    Some(pos) => return Some(pos),
-                    _ => (),
+                if let Some(pos) = a.get_intersection(b) {
+                    return Some(pos);
                 }
             }
         }
