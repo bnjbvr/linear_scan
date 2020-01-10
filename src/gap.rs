@@ -23,11 +23,8 @@ trait GapResolverHelper {
     ) -> bool;
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R> + Clone,
-    > GapResolver for Graph<K, G, R>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R> + Clone>
+    GapResolver for Graph<K, G, R>
 {
     fn resolve_gaps(&mut self) {
         let mut keys = vec![];
@@ -43,11 +40,8 @@ impl<
     }
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R> + Clone,
-    > GapResolverHelper for Graph<K, G, R>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R> + Clone>
+    GapResolverHelper for Graph<K, G, R>
 {
     fn resolve_gap(&mut self, id: &InstrId) -> GapState {
         let state = self.fields.gaps.remove(&id).unwrap();

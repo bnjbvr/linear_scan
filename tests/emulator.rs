@@ -4,7 +4,7 @@ use linearscan::*;
 use log::debug;
 
 #[derive(PartialEq, Debug, Clone)]
-pub enum Kind {
+pub enum TestKind {
     Increment,
     Sum,
     DoubleSum,
@@ -21,16 +21,16 @@ pub enum Kind {
     ReturnDouble,
 }
 
-// Register groups
+// Register class
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Group {
+pub enum TestRegClass {
     Normal,
     Double,
 }
 
 // Registers
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Register {
+pub enum TestReg {
     Rax,
     Rbx,
     Rcx,
@@ -41,131 +41,118 @@ pub enum Register {
     Xmm4,
 }
 
-impl GroupHelper for Group {
-    type Register = Register;
-    fn groups() -> Vec<Group> {
-        vec![Group::Normal, Group::Double]
+impl RegClass for TestRegClass {
+    type Register = TestReg;
+    fn all_reg_classes() -> Vec<TestRegClass> {
+        vec![TestRegClass::Normal, TestRegClass::Double]
     }
-    fn registers(&self) -> Vec<Register> {
+    fn registers(&self) -> Vec<TestReg> {
         match *self {
-            Group::Normal => vec![Register::Rax, Register::Rbx, Register::Rcx, Register::Rdx],
-            Group::Double => vec![
-                Register::Xmm1,
-                Register::Xmm2,
-                Register::Xmm3,
-                Register::Xmm4,
-            ],
+            TestRegClass::Normal => vec![TestReg::Rax, TestReg::Rbx, TestReg::Rcx, TestReg::Rdx],
+            TestRegClass::Double => {
+                vec![TestReg::Xmm1, TestReg::Xmm2, TestReg::Xmm3, TestReg::Xmm4]
+            }
         }
     }
     fn to_uint(&self) -> usize {
         match self {
-            Group::Normal => 0,
-            Group::Double => 1,
+            TestRegClass::Normal => 0,
+            TestRegClass::Double => 1,
         }
     }
-    fn from_uint(i: usize) -> Group {
+    fn from_uint(i: usize) -> TestRegClass {
         match i {
-            0 => Group::Normal,
-            1 => Group::Double,
+            0 => TestRegClass::Normal,
+            1 => TestRegClass::Double,
             _ => panic!(),
         }
     }
 }
 
-impl RegisterHelper<Group> for Register {
-    fn group(&self) -> Group {
+impl Register<TestRegClass> for TestReg {
+    fn reg_class(&self) -> TestRegClass {
         match *self {
-            Register::Rax | Register::Rbx | Register::Rcx | Register::Rdx => Group::Normal,
-            Register::Xmm1 | Register::Xmm2 | Register::Xmm3 | Register::Xmm4 => Group::Double,
+            TestReg::Rax | TestReg::Rbx | TestReg::Rcx | TestReg::Rdx => TestRegClass::Normal,
+            TestReg::Xmm1 | TestReg::Xmm2 | TestReg::Xmm3 | TestReg::Xmm4 => TestRegClass::Double,
         }
     }
 
     fn to_uint(&self) -> usize {
-        match self.group() {
-            Group::Normal => match self {
-                Register::Rax => 0,
-                Register::Rbx => 1,
-                Register::Rcx => 2,
-                Register::Rdx => 3,
-                _ => panic!(),
-            },
-            Group::Double => match self {
-                Register::Xmm1 => 0,
-                Register::Xmm2 => 1,
-                Register::Xmm3 => 2,
-                Register::Xmm4 => 3,
-                _ => panic!(),
-            },
+        match self {
+            TestReg::Rax | TestReg::Xmm1 => 0,
+            TestReg::Rbx | TestReg::Xmm2 => 1,
+            TestReg::Rcx | TestReg::Xmm3 => 2,
+            TestReg::Rdx | TestReg::Xmm4 => 3,
         }
     }
 
-    fn from_uint(g: &Group, i: usize) -> Register {
+    fn from_uint(g: &TestRegClass, i: usize) -> TestReg {
         match g {
-            &Group::Normal => match i {
-                0 => Register::Rax,
-                1 => Register::Rbx,
-                2 => Register::Rcx,
-                3 => Register::Rdx,
+            &TestRegClass::Normal => match i {
+                0 => TestReg::Rax,
+                1 => TestReg::Rbx,
+                2 => TestReg::Rcx,
+                3 => TestReg::Rdx,
                 _ => panic!(),
             },
-            &Group::Double => match i {
-                0 => Register::Xmm1,
-                1 => Register::Xmm2,
-                2 => Register::Xmm3,
-                3 => Register::Xmm4,
+            &TestRegClass::Double => match i {
+                0 => TestReg::Xmm1,
+                1 => TestReg::Xmm2,
+                2 => TestReg::Xmm3,
+                3 => TestReg::Xmm4,
                 _ => panic!(),
             },
         }
     }
 }
 
-impl KindHelper for Kind {
-    type Group = Group;
-    type Register = Register;
+impl Kind for TestKind {
+    type RegClass = TestRegClass;
+    type Register = TestReg;
 
-    fn clobbers(&self, _: &Group) -> bool {
+    fn clobbers(&self, _: &TestRegClass) -> bool {
         match &self {
-            &Kind::Print => true,
+            &TestKind::Print => true,
             _ => false,
         }
     }
 
-    fn temporary(&self) -> Vec<Group> {
+    fn temporary(&self) -> Vec<TestRegClass> {
         match self {
-            &Kind::BranchIfBigger => vec![Group::Normal],
+            &TestKind::BranchIfBigger => vec![TestRegClass::Normal],
             _ => vec![],
         }
     }
 
-    fn use_kind(&self, i: usize) -> UseKind<Group, Register> {
+    fn use_kind(&self, i: usize) -> UseKind<TestRegClass, TestReg> {
         match self {
-            &Kind::BranchIfBigger if i == 0 => Register::Rcx.use_fixed(),
-            &Kind::JustUse => Register::Rbx.use_fixed(),
-            &Kind::FixedUse => {
-                let r: Register = RegisterHelper::from_uint(&Group::Normal, i);
+            &TestKind::BranchIfBigger if i == 0 => TestReg::Rcx.use_fixed(),
+            &TestKind::JustUse => TestReg::Rbx.use_fixed(),
+            &TestKind::FixedUse => {
+                let r: TestReg = Register::from_uint(&TestRegClass::Normal, i);
                 r.use_fixed()
             }
-            &Kind::Print => Register::Rdx.use_fixed(),
-            &Kind::Return => Register::Rax.use_fixed(),
-            &Kind::ReturnDouble => Register::Xmm1.use_fixed(),
-            &Kind::DoubleSum => Group::Double.use_reg(),
-            &Kind::ToDouble => Group::Normal.use_reg(),
-            _ => Group::Normal.use_any(),
+            &TestKind::Print => TestReg::Rdx.use_fixed(),
+            &TestKind::Return => TestReg::Rax.use_fixed(),
+            &TestKind::ReturnDouble => TestReg::Xmm1.use_fixed(),
+            &TestKind::DoubleSum => TestRegClass::Double.use_reg(),
+            &TestKind::ToDouble => TestRegClass::Normal.use_reg(),
+            _ => TestRegClass::Normal.use_any(),
         }
     }
 
-    fn result_kind(&self) -> Option<UseKind<Group, Register>> {
+    fn result_kind(&self) -> Option<UseKind<TestRegClass, TestReg>> {
         match self {
-            &Kind::Return => None,
-            &Kind::ReturnDouble => None,
-            &Kind::BranchIfBigger => None,
-            &Kind::JustUse => None,
-            &Kind::FixedUse => None,
-            &Kind::Nop => None,
-            &Kind::DoubleNumber(_) => Some(Group::Double.use_any()),
-            &Kind::DoubleSum => Some(Group::Double.use_reg()),
-            &Kind::ToDouble => Some(Group::Double.use_reg()),
-            _ => Some(Group::Normal.use_reg()),
+            &TestKind::Return => None,
+            &TestKind::ReturnDouble => None,
+            &TestKind::BranchIfBigger => None,
+            &TestKind::JustUse => None,
+            &TestKind::FixedUse => None,
+            &TestKind::Nop => None,
+            &TestKind::DoubleNumber(_) => Some(TestRegClass::Double.use_any()),
+            &TestKind::DoubleSum => Some(TestRegClass::Double.use_reg()),
+            &TestKind::ToDouble => Some(TestRegClass::Double.use_reg()),
+            _ => Some(TestRegClass::Normal.use_reg()),
         }
     }
 }
@@ -220,8 +207,8 @@ pub struct Emulator {
 
 #[derive(Debug, Clone)]
 enum Instruction {
-    Move(Value<Group, Register>, Value<Group, Register>),
-    Swap(Value<Group, Register>, Value<Group, Register>),
+    Move(Value<TestRegClass, TestReg>, Value<TestRegClass, TestReg>),
+    Swap(Value<TestRegClass, TestReg>, Value<TestRegClass, TestReg>),
     UnexpectedEnd,
     Block(BlockId),
     Goto(BlockId),
@@ -230,14 +217,14 @@ enum Instruction {
 
 #[derive(Debug, Clone)]
 struct GenericInstruction {
-    kind: Kind,
-    output: Option<Value<Group, Register>>,
-    inputs: Vec<Value<Group, Register>>,
-    temporary: Vec<Value<Group, Register>>,
+    kind: TestKind,
+    output: Option<Value<TestRegClass, TestReg>>,
+    inputs: Vec<Value<TestRegClass, TestReg>>,
+    temporary: Vec<Value<TestRegClass, TestReg>>,
     succ: Vec<BlockId>,
 }
 
-impl GeneratorFunctions<Kind, Group, Register> for Emulator {
+impl GeneratorFunctions<TestKind, TestRegClass, TestReg> for Emulator {
     fn prelude(&mut self) {
         // nop
     }
@@ -246,12 +233,12 @@ impl GeneratorFunctions<Kind, Group, Register> for Emulator {
         self.instructions.push(Instruction::UnexpectedEnd);
     }
 
-    fn swap(&mut self, left: &Value<Group, Register>, right: &Value<Group, Register>) {
+    fn swap(&mut self, left: &Value<TestRegClass, TestReg>, right: &Value<TestRegClass, TestReg>) {
         self.instructions
             .push(Instruction::Swap(left.clone(), right.clone()));
     }
 
-    fn move_(&mut self, from: &Value<Group, Register>, to: &Value<Group, Register>) {
+    fn move_(&mut self, from: &Value<TestRegClass, TestReg>, to: &Value<TestRegClass, TestReg>) {
         self.instructions
             .push(Instruction::Move(from.clone(), to.clone()));
     }
@@ -268,10 +255,10 @@ impl GeneratorFunctions<Kind, Group, Register> for Emulator {
 
     fn instr(
         &mut self,
-        kind: &Kind,
-        output: Option<Value<Group, Register>>,
-        inputs: &[Value<Group, Register>],
-        temporary: &[Value<Group, Register>],
+        kind: &TestKind,
+        output: Option<Value<TestRegClass, TestReg>>,
+        inputs: &[Value<TestRegClass, TestReg>],
+        temporary: &[Value<TestRegClass, TestReg>],
         succ: &[BlockId],
     ) {
         self.instructions
@@ -287,7 +274,7 @@ impl GeneratorFunctions<Kind, Group, Register> for Emulator {
 
 pub fn run_test(
     expected: UintOrDouble,
-    mut body: impl FnMut(&mut GraphBuilder<Kind, Group, Register>),
+    mut body: impl FnMut(&mut GraphBuilder<TestKind, TestRegClass, TestReg>),
 ) {
     let _ = pretty_env_logger::try_init();
 
@@ -321,7 +308,7 @@ impl Emulator {
         }
     }
 
-    fn run(&mut self, graph: &Graph<Kind, Group, Register>) -> UintOrDouble {
+    fn run(&mut self, graph: &Graph<TestKind, TestRegClass, TestReg>) -> UintOrDouble {
         // Generate instructions
         debug!("generating graph...");
         graph.generate(self);
@@ -365,21 +352,21 @@ impl Emulator {
         }
     }
 
-    fn get(&self, slot: &Value<Group, Register>) -> UintOrDouble {
+    fn get(&self, slot: &Value<TestRegClass, TestReg>) -> UintOrDouble {
         match slot {
-            Value::RegisterVal(r) if r.group() == Group::Normal => {
+            Value::RegisterVal(r) if r.reg_class() == TestRegClass::Normal => {
                 UintOrDouble::Uint(*self.registers.get(&r.to_uint()).expect("Defined register"))
             }
-            Value::RegisterVal(r) if r.group() == Group::Double => UintOrDouble::Double(
+            Value::RegisterVal(r) if r.reg_class() == TestRegClass::Double => UintOrDouble::Double(
                 *self
                     .double_registers
                     .get(&r.to_uint())
                     .expect("Defined f64 register"),
             ),
-            Value::StackVal(Group::Normal, s) => {
+            Value::StackVal(TestRegClass::Normal, s) => {
                 UintOrDouble::Uint(*self.stack.get(&s.to_uint()).expect("Defined stack slot"))
             }
-            Value::StackVal(Group::Double, s) => UintOrDouble::Double(
+            Value::StackVal(TestRegClass::Double, s) => UintOrDouble::Double(
                 *self
                     .double_stack
                     .get(&s.to_uint())
@@ -389,19 +376,19 @@ impl Emulator {
         }
     }
 
-    fn put(&mut self, slot: Value<Group, Register>, value: UintOrDouble) {
+    fn put(&mut self, slot: Value<TestRegClass, TestReg>, value: UintOrDouble) {
         match slot {
-            Value::RegisterVal(r) if r.group() == Group::Normal => {
+            Value::RegisterVal(r) if r.reg_class() == TestRegClass::Normal => {
                 self.registers.insert(r.to_uint(), value.unwrap_left());
             }
-            Value::RegisterVal(r) if r.group() == Group::Double => {
+            Value::RegisterVal(r) if r.reg_class() == TestRegClass::Double => {
                 self.double_registers
                     .insert(r.to_uint(), value.unwrap_right());
             }
-            Value::StackVal(Group::Normal, s) => {
+            Value::StackVal(TestRegClass::Normal, s) => {
                 self.stack.insert(s.to_uint(), value.unwrap_left());
             }
-            Value::StackVal(Group::Double, s) => {
+            Value::StackVal(TestRegClass::Double, s) => {
                 self.double_stack.insert(s.to_uint(), value.unwrap_right());
             }
             _ => panic!(),
@@ -415,47 +402,47 @@ impl Emulator {
         let tmp = &instr.temporary;
 
         match instr.kind {
-            Kind::Increment => self.put(
+            TestKind::Increment => self.put(
                 out.expect("Increment out"),
                 UintOrDouble::Uint(inputs[0].unwrap_left() + 1),
             ),
-            Kind::JustUse => (),  // nop
-            Kind::FixedUse => (), // nop
-            Kind::Nop => (),      // nop
-            Kind::Print => self.put(out.expect("Print out"), UintOrDouble::Uint(0)),
-            Kind::Number(n) => self.put(out.expect("Number out"), UintOrDouble::Uint(n)),
-            Kind::DoubleNumber(n) => {
+            TestKind::JustUse => (),  // nop
+            TestKind::FixedUse => (), // nop
+            TestKind::Nop => (),      // nop
+            TestKind::Print => self.put(out.expect("Print out"), UintOrDouble::Uint(0)),
+            TestKind::Number(n) => self.put(out.expect("Number out"), UintOrDouble::Uint(n)),
+            TestKind::DoubleNumber(n) => {
                 self.put(out.expect("Double Number out"), UintOrDouble::Double(n))
             }
-            Kind::Sum => self.put(
+            TestKind::Sum => self.put(
                 out.expect("Sum out"),
                 UintOrDouble::Uint(inputs[0].unwrap_left() + inputs[1].unwrap_left()),
             ),
-            Kind::MultAdd => self.put(
+            TestKind::MultAdd => self.put(
                 out.expect("Mult add out"),
                 UintOrDouble::Uint(
                     inputs[0].unwrap_left() * inputs[1].unwrap_left() + inputs[2].unwrap_left(),
                 ),
             ),
-            Kind::DoubleSum => self.put(
+            TestKind::DoubleSum => self.put(
                 out.expect("Double sum out"),
                 UintOrDouble::Double(inputs[0].unwrap_right() + inputs[1].unwrap_right()),
             ),
-            Kind::ToDouble => self.put(
+            TestKind::ToDouble => self.put(
                 out.expect("ToDouble out"),
                 UintOrDouble::Double(inputs[0].unwrap_left() as f64),
             ),
-            Kind::Return => {
+            TestKind::Return => {
                 assert!(inputs[0].is_left());
                 self.result = Some(inputs[0].clone());
                 return;
             }
-            Kind::ReturnDouble => {
+            TestKind::ReturnDouble => {
                 assert!(inputs[0].is_right());
                 self.result = Some(inputs[0].clone());
                 return;
             }
-            Kind::BranchIfBigger => {
+            TestKind::BranchIfBigger => {
                 self.put(tmp[0].clone(), UintOrDouble::Uint(0));
                 if inputs[0].unwrap_left() > inputs[1].unwrap_left() {
                     self.ip = *self

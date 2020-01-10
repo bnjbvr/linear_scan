@@ -1,6 +1,6 @@
 use crate::compat::BitvSet;
 use crate::graph::{BlockId, Graph};
-use crate::{GroupHelper, KindHelper, RegisterHelper};
+use crate::{Kind, RegClass, Register};
 
 pub(crate) trait Liveness {
     fn liveness_analysis(&mut self);
@@ -14,11 +14,8 @@ trait LivenessHelper {
     fn build_global(&mut self, blocks: &[BlockId]);
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > Liveness for Graph<K, G, R>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>> Liveness
+    for Graph<K, G, R>
 {
     fn liveness_analysis(&mut self) {
         let blocks = self.get_block_list();
@@ -27,11 +24,8 @@ impl<
     }
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > LivenessHelper for Graph<K, G, R>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>> LivenessHelper
+    for Graph<K, G, R>
 {
     fn build_local(&mut self, blocks: &[BlockId]) {
         for block in blocks.iter() {

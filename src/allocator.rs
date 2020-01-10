@@ -5,7 +5,7 @@ use crate::graph::{
     BlockId, FinishedGraph, Graph, InstrId, Interval, IntervalId, StackId, UseKind, Value,
 };
 use crate::liveness::Liveness;
-use crate::{GroupHelper, KindHelper, RegisterHelper};
+use crate::{Kind, RegClass, Register};
 
 pub struct AllocatorResult {
     _spill_count: Vec<usize>,
@@ -21,12 +21,12 @@ enum SplitConf {
     At(InstrId),
 }
 
-struct GroupResult {
+struct RegClassResult {
     spill_count: usize,
 }
 
 struct AllocatorState<G, R> {
-    group: G,
+    reg_class: G,
     register_count: usize,
     spill_count: usize,
     spills: Vec<Value<G, R>>,
@@ -35,9 +35,9 @@ struct AllocatorState<G, R> {
     inactive: Vec<IntervalId>,
 }
 
-trait AllocatorHelper<G: GroupHelper<Register = R>, R: RegisterHelper<G>> {
+trait AllocatorHelper<G: RegClass<Register = R>, R: Register<G>> {
     // Walk unhandled intervals in the order of increasing starting point
-    fn walk_intervals(&mut self, group: &G) -> Result<GroupResult, String>;
+    fn walk_intervals(&mut self, reg_class: &G) -> Result<RegClassResult, String>;
     // Try allocating free register
     fn allocate_free_reg<'r>(
         &'r mut self,
@@ -94,11 +94,8 @@ trait AllocatorHelper<G: GroupHelper<Register = R>, R: RegisterHelper<G>> {
     fn verify(&self);
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > Allocator for Graph<K, G, R>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>> Allocator
+    for Graph<K, G, R>
 {
     fn allocate(&mut self) -> Result<AllocatorResult, String> {
         if !self.fields.prepared {
@@ -112,19 +109,19 @@ impl<
         }
 
         // Create physical fixed intervals
-        let groups: Vec<G> = GroupHelper::groups();
-        for group in groups.iter() {
+        let reg_classes: Vec<G> = RegClass::all_reg_classes();
+        for reg_class in reg_classes.iter() {
             self.fields
                 .physical
-                .insert(group.to_uint(), SmallIntMap::new());
-            let regs = group.registers();
+                .insert(reg_class.to_uint(), SmallIntMap::new());
+            let regs = reg_class.registers();
             for reg in regs.iter() {
-                let interval = Interval::<G, R>::new::<K, FinishedGraph>(self, group.clone());
+                let interval = Interval::<G, R>::new::<K, FinishedGraph>(self, reg_class.clone());
                 self.get_mut_interval(&interval).value = Value::RegisterVal(reg.clone());
                 self.get_mut_interval(&interval).fixed = true;
                 self.fields
                     .physical
-                    .get_mut(&group.to_uint())
+                    .get_mut(&reg_class.to_uint())
                     .unwrap()
                     .insert(reg.to_uint(), interval);
             }
@@ -135,10 +132,10 @@ impl<
         // Create live ranges
         self.build_ranges(&list)?;
         let mut results = vec![];
-        // In each register group
-        for group in groups.iter() {
+        // In each register class:
+        for reg_class in reg_classes.iter() {
             // Walk intervals!
-            results.push(self.walk_intervals(group)?);
+            results.push(self.walk_intervals(reg_class)?);
         }
 
         // Add moves between blocks
@@ -150,7 +147,7 @@ impl<
         // Verify correctness of allocation
         self.verify();
 
-        // Map results from each group to a general result
+        // Map results from each register class to a general result.
         Ok(AllocatorResult {
             _spill_count: results.iter().map(|result| result.spill_count).collect(),
         })
@@ -158,16 +155,16 @@ impl<
 }
 
 impl<
-        G: GroupHelper<Register = R> + PartialEq,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
+        G: RegClass<Register = R> + PartialEq,
+        R: Register<G>,
+        K: Kind<RegClass = G, Register = R>,
     > AllocatorHelper<G, R> for Graph<K, G, R>
 {
-    fn walk_intervals(&mut self, group: &G) -> Result<GroupResult, String> {
+    fn walk_intervals(&mut self, reg_class: &G) -> Result<RegClassResult, String> {
         // Initialize allocator state
-        let reg_count = group.registers().len();
+        let reg_count = reg_class.registers().len();
         let mut state = AllocatorState {
-            group: group.clone(),
+            reg_class: reg_class.clone(),
             register_count: reg_count,
             spill_count: 0,
             spills: vec![],
@@ -178,7 +175,7 @@ impl<
 
         // We'll work with intervals that contain any ranges
         for (_, interval) in self.fields.intervals.iter() {
-            if interval.value.group() == state.group && interval.ranges.len() > 0 {
+            if interval.value.reg_class() == state.reg_class && interval.ranges.len() > 0 {
                 if interval.fixed {
                     // Push all physical registers to active
                     state.active.push(interval.id);
@@ -247,7 +244,7 @@ impl<
             }
         }
 
-        Ok(GroupResult {
+        Ok(RegClassResult {
             spill_count: state.spill_count,
         })
     }
@@ -327,8 +324,8 @@ impl<
             // Register is available for some part of current's lifetime
             assert!(max_pos < end);
 
-            let mut split_pos = self.optimal_split_pos(&state.group, start, max_pos);
-            if split_pos == max_pos.prev() && self.clobbers(&state.group, &max_pos) {
+            let mut split_pos = self.optimal_split_pos(&state.reg_class, start, max_pos);
+            if split_pos == max_pos.prev() && self.clobbers(&state.reg_class, &max_pos) {
                 // Splitting right before `call` instruction is pointless,
                 // unless we have a register use at that instruction,
                 // try spilling current instead.
@@ -351,7 +348,7 @@ impl<
 
         // Give current a register
         self.get_mut_interval(&current).value =
-            Value::RegisterVal(RegisterHelper::from_uint(&state.group, reg));
+            Value::RegisterVal(Register::from_uint(&state.reg_class, reg));
 
         true
     }
@@ -468,7 +465,7 @@ impl<
                 } else {
                     // Assign register to current
                     self.get_mut_interval(&current).value =
-                        Value::RegisterVal(RegisterHelper::from_uint(&state.group, reg));
+                        Value::RegisterVal(Register::from_uint(&state.reg_class, reg));
 
                     // If blocked somewhere before end by fixed interval
                     if block_pos[reg] <= self.get_interval(&current).end().to_uint() {
@@ -540,7 +537,7 @@ impl<
         match self.get_interval(&current).hint {
             Some(ref id) => match self.get_interval(id).value {
                 Value::RegisterVal(ref r) => {
-                    assert!(r.group() == self.get_interval(&current).value.group());
+                    assert!(r.reg_class() == self.get_interval(&current).value.reg_class());
                     Some(r.clone())
                 }
                 _ => None,
@@ -556,7 +553,7 @@ impl<
         state: &'r mut AllocatorState<G, R>,
     ) -> IntervalId {
         let split_pos = match conf {
-            SplitConf::Between(start, end) => self.optimal_split_pos(&state.group, start, end),
+            SplitConf::Between(start, end) => self.optimal_split_pos(&state.reg_class, start, end),
             SplitConf::At(pos) => pos,
         };
 
@@ -589,7 +586,7 @@ impl<
         // Split and spill!
         for id in to_split.iter() {
             // Spill before or at start of `current`
-            let spill_pos = if self.clobbers(&state.group, &start) || self.is_gap(&start) {
+            let spill_pos = if self.clobbers(&state.reg_class, &start) || self.is_gap(&start) {
                 start
             } else {
                 start.prev()
@@ -668,17 +665,17 @@ impl<
                 let instr = self.get_instr(&instr_id).clone();
 
                 // Call instructions should swap out all used registers into stack slots
-                let groups: Vec<G> = GroupHelper::groups();
-                for group in groups.iter() {
+                let reg_classes: Vec<G> = RegClass::all_reg_classes();
+                for reg_class in reg_classes.iter() {
                     self.fields
                         .physical
-                        .insert(group.to_uint(), SmallIntMap::new());
-                    if instr.kind.clobbers(group) {
-                        let regs = group.registers();
+                        .insert(reg_class.to_uint(), SmallIntMap::new());
+                    if instr.kind.clobbers(reg_class) {
+                        let regs = reg_class.registers();
                         for reg in regs.iter() {
                             self.get_mut_interval(
                                 physical
-                                    .get(&group.to_uint())
+                                    .get(&reg_class.to_uint())
                                     .unwrap()
                                     .get(&reg.to_uint())
                                     .unwrap(),
@@ -692,8 +689,8 @@ impl<
                 match instr.output {
                     Some(output) => {
                         // Call instructions are defining their value after the call
-                        let group = self.get_interval(&output).value.group();
-                        let pos = if instr.kind.clobbers(&group) {
+                        let reg_class = self.get_interval(&output).value.reg_class();
+                        let pos = if instr.kind.clobbers(&reg_class) {
                             instr_id.next()
                         } else {
                             instr_id
@@ -714,14 +711,14 @@ impl<
 
                 // Process temporary
                 for tmp in instr.temporary.iter() {
-                    let group = self.get_interval(tmp).value.group();
-                    if instr.kind.clobbers(&group) {
+                    let reg_class = self.get_interval(tmp).value.reg_class();
+                    if instr.kind.clobbers(&reg_class) {
                         return Err("Call instruction can't have temporary registers".into());
                     }
                     self.get_mut_interval(tmp)
                         .add_range(instr_id, instr_id.next());
                     self.get_mut_interval(tmp)
-                        .add_use(group.use_reg(), instr_id);
+                        .add_use(reg_class.use_reg(), instr_id);
                 }
 
                 // Process inputs
@@ -760,7 +757,7 @@ impl<
             while i < uses.len() - 1 {
                 // Split between each pair of uses
                 let split_pos =
-                    self.optimal_split_pos(&uses[i].kind.group(), uses[i].pos, uses[i + 1].pos);
+                    self.optimal_split_pos(&uses[i].kind.reg_class(), uses[i].pos, uses[i + 1].pos);
                 self.split_at(&cur, split_pos);
 
                 i += 1;
@@ -777,8 +774,8 @@ impl<
 
                 // Each use should receive the same type of input as it has requested
                 for u in interval.uses.iter() {
-                    // Allocated groups should not differ from specified
-                    assert!(u.kind.group() == interval.value.group());
+                    // Allocated register classes should not differ from specified
+                    assert!(u.kind.reg_class() == interval.value.reg_class());
                     match u.kind {
                         // Any use - no restrictions
                         UseKind::UseAny(_) => (),
@@ -801,21 +798,21 @@ impl<
     }
 }
 
-impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> AllocatorState<G, R> {
+impl<G: RegClass<Register = R>, R: Register<G>> AllocatorState<G, R> {
     fn get_spill(&mut self) -> Value<G, R> {
         if self.spills.len() > 0 {
             self.spills.remove(0)
         } else {
             let slot = self.spill_count;
             self.spill_count += 1;
-            Value::StackVal(self.group.clone(), StackId(slot))
+            Value::StackVal(self.reg_class.clone(), StackId(slot))
         }
     }
 
     fn to_handled(&mut self, value: &Value<G, R>) {
         match value {
-            &Value::StackVal(ref group, slot) => {
-                self.spills.push(Value::StackVal(group.clone(), slot))
+            &Value::StackVal(ref reg_class, slot) => {
+                self.spills.push(Value::StackVal(reg_class.clone(), slot))
             }
             _ => (),
         }

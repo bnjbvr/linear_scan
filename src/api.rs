@@ -1,12 +1,12 @@
-// Public API
 pub use crate::allocator::Allocator;
 pub use crate::generator::{Generator, GeneratorFunctions};
 pub use crate::graph::{BlockId, Graph, GraphBuilder, InstrId, StackId, UseKind, Value};
 
-pub trait GroupHelper: Clone + Eq {
+pub trait RegClass: Clone + Eq {
     type Register;
 
-    fn groups() -> Vec<Self>;
+    fn all_reg_classes() -> Vec<Self>;
+
     fn registers(&self) -> Vec<Self::Register>;
     fn to_uint(&self) -> usize;
     fn from_uint(i: usize) -> Self;
@@ -19,22 +19,22 @@ pub trait GroupHelper: Clone + Eq {
     }
 }
 
-pub trait RegisterHelper<Group>: Clone + Eq {
-    fn group(&self) -> Group;
+pub trait Register<RegClass>: Clone + Eq {
+    fn reg_class(&self) -> RegClass;
     fn to_uint(&self) -> usize;
-    fn from_uint(g: &Group, i: usize) -> Self;
+    fn from_uint(g: &RegClass, i: usize) -> Self;
 
-    fn use_fixed(&self) -> UseKind<Group, Self> {
+    fn use_fixed(&self) -> UseKind<RegClass, Self> {
         UseKind::UseFixed(self.clone())
     }
 }
 
-pub trait KindHelper: Clone {
-    type Group;
+pub trait Kind: Clone {
+    type RegClass;
     type Register;
 
-    fn clobbers(&self, group: &Self::Group) -> bool;
-    fn temporary(&self) -> Vec<Self::Group>;
-    fn use_kind(&self, i: usize) -> UseKind<Self::Group, Self::Register>;
-    fn result_kind(&self) -> Option<UseKind<Self::Group, Self::Register>>;
+    fn clobbers(&self, group: &Self::RegClass) -> bool;
+    fn temporary(&self) -> Vec<Self::RegClass>;
+    fn use_kind(&self, i: usize) -> UseKind<Self::RegClass, Self::Register>;
+    fn result_kind(&self) -> Option<UseKind<Self::RegClass, Self::Register>>;
 }

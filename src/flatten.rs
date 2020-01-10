@@ -3,7 +3,7 @@ use std::iter::FromIterator;
 
 use crate::compat::BitvSet;
 use crate::graph::{BlockId, Graph};
-use crate::{GroupHelper, KindHelper, RegisterHelper};
+use crate::{Kind, RegClass, Register};
 
 pub(crate) trait Flatten {
     /// Perform flattening itself.
@@ -24,11 +24,8 @@ trait FlattenHelper {
     fn flatten_reindex_instructions(&mut self, list: &[BlockId]);
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > FlattenHelper for Graph<K, G, R>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>> FlattenHelper
+    for Graph<K, G, R>
 {
     fn flatten_get_ends(&mut self) -> BTreeMap<BlockId, Vec<BlockId>> {
         let mut queue = vec![self.state.root];
@@ -249,11 +246,8 @@ impl<
     }
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > Flatten for Graph<K, G, R>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>> Flatten
+    for Graph<K, G, R>
 {
     fn flatten(&mut self) {
         self.flatten_assign_indexes();

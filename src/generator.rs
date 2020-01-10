@@ -1,11 +1,11 @@
 use crate::graph::{BlockId, GapActionKind, Graph, InstrId, InstrKind, Value};
-use crate::{GroupHelper, KindHelper, RegisterHelper};
+use crate::{Kind, RegClass, Register};
 
 pub trait Generator<K, G> {
     fn generate(&self, g: &mut G);
 }
 
-pub trait GeneratorFunctions<K, G: GroupHelper<Register = R>, R: RegisterHelper<G>> {
+pub trait GeneratorFunctions<K, G: RegClass<Register = R>, R: Register<G>> {
     /// Function prologue (stack initialization, etc)
     fn prelude(&mut self);
 
@@ -42,9 +42,9 @@ pub trait GeneratorHelper<K, GF> {
 }
 
 impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
+        G: RegClass<Register = R>,
+        R: Register<G>,
+        K: Kind<RegClass = G, Register = R>,
         GF: GeneratorFunctions<K, G, R>,
     > Generator<K, GF> for Graph<K, G, R>
 {
@@ -79,10 +79,10 @@ impl<
                 // NOTE: call instruction's output is located right after instruction
                 let output = match instr.output {
                     Some(ref out) => {
-                        let group = instr.kind.result_kind().unwrap().group();
+                        let reg_class = instr.kind.result_kind().unwrap().reg_class();
                         self.get_value(
                             out,
-                            if instr.kind.clobbers(&group) {
+                            if instr.kind.clobbers(&reg_class) {
                                 instr.id.next()
                             } else {
                                 instr.id
@@ -139,9 +139,9 @@ impl<
 }
 
 impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
+        G: RegClass<Register = R>,
+        R: Register<G>,
+        K: Kind<RegClass = G, Register = R>,
         GF: GeneratorFunctions<K, G, R>,
     > GeneratorHelper<K, GF> for Graph<K, G, R>
 {

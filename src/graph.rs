@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::compat::{BitvSet, SmallIntMap};
-use crate::{GroupHelper, KindHelper, RegisterHelper};
+use crate::{Kind, RegClass, Register};
 
 macro_rules! define_entity {
     ($name:ident, $short_name:literal) => {
@@ -43,12 +43,8 @@ pub struct BlockBuilder<'graph, K, G, R> {
     block: BlockId,
 }
 
-impl<
-        'a,
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > BlockBuilder<'a, K, G, R>
+impl<'a, G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>>
+    BlockBuilder<'a, K, G, R>
 {
     /// add instruction to block
     pub fn add(&mut self, kind: K, args: Vec<InstrId>) -> InstrId {
@@ -76,8 +72,8 @@ impl<
 
     /// add phi movement to block
     pub fn to_phi(&mut self, input: InstrId, phi: InstrId) {
-        let group = match self.graph.get_instr(&phi).kind {
-            InstrKind::Phi(ref group) => group.clone(),
+        let reg_class = match self.graph.get_instr(&phi).kind {
+            InstrKind::Phi(ref reg_class) => reg_class.clone(),
             _ => panic!("Expected Phi argument"),
         };
         let out = self.graph.get_instr(&phi).output.expect("Phi output");
@@ -92,7 +88,7 @@ impl<
             self.graph.get_mut_interval(&out).hint = Some(inp);
         }
 
-        let res = Instruction::new_empty(self.graph, InstrKind::ToPhi(group), vec![input]);
+        let res = Instruction::new_empty(self.graph, InstrKind::ToPhi(reg_class), vec![input]);
         self.graph.get_mut_instr(&res).output = Some(out);
         self.add_existing(res);
         self.graph.get_mut_instr(&phi).inputs.push(res);
@@ -158,11 +154,7 @@ pub struct Block {
 
 impl Block {
     /// Create new empty block
-    pub fn new<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    >(
+    pub fn new<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>>(
         graph: &mut GraphBuilder<K, G, R>,
     ) -> Block {
         Block {
@@ -217,11 +209,8 @@ pub struct Instruction<K, G> {
     pub added: bool,
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > Instruction<K, G>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>>
+    Instruction<K, G>
 {
     /// Create instruction without output interval
     pub fn new_empty(
@@ -232,8 +221,8 @@ impl<
         let id = graph.next_instr_id();
 
         let mut temporary = vec![];
-        for group in kind.temporary().iter() {
-            temporary.push(Interval::new(graph, group.clone()));
+        for reg_class in kind.temporary().iter() {
+            temporary.push(Interval::new(graph, reg_class.clone()));
         }
 
         let r = Instruction {
@@ -256,7 +245,7 @@ impl<
         args: Vec<InstrId>,
     ) -> InstrId {
         let output = match kind.result_kind() {
-            Some(k) => Some(Interval::new(graph, k.group())),
+            Some(k) => Some(Interval::new(graph, k.reg_class())),
             None => None,
         };
 
@@ -276,19 +265,16 @@ pub enum InstrKind<K, G> {
     ToPhi(G),
 }
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > KindHelper for InstrKind<K, G>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>> Kind
+    for InstrKind<K, G>
 {
-    type Group = G;
+    type RegClass = G;
     type Register = R;
 
     /// Return true if instruction is clobbering registers
-    fn clobbers(&self, group: &G) -> bool {
+    fn clobbers(&self, reg_class: &G) -> bool {
         match self {
-            &InstrKind::User(ref k) => k.clobbers(group),
+            &InstrKind::User(ref k) => k.clobbers(reg_class),
             &InstrKind::Gap => false,
             &InstrKind::ToPhi(_) => false,
             &InstrKind::Phi(_) => false,
@@ -338,15 +324,15 @@ pub struct Interval<G, R> {
     pub fixed: bool,
 }
 
-impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> Interval<G, R> {
+impl<G: RegClass<Register = R>, R: Register<G>> Interval<G, R> {
     /// Create new virtual interval
-    pub fn new<K: KindHelper<Group = G, Register = R>, S: GraphState>(
+    pub fn new<K: Kind<RegClass = G, Register = R>, S: GraphState>(
         graph: &mut GraphWithState<K, G, R, S>,
-        group: G,
+        reg_class: G,
     ) -> IntervalId {
         let r = Interval {
             id: graph.interval_id(),
-            value: Value::VirtualVal(group),
+            value: Value::VirtualVal(reg_class),
             hint: None,
             ranges: vec![],
             parent: None,
@@ -408,7 +394,7 @@ impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> Interval<G, R> {
         assert!(
             self.uses.len() == 0
                 || self.uses[0].pos > pos
-                || self.uses[0].kind.group() == kind.group()
+                || self.uses[0].kind.reg_class() == kind.reg_class()
         );
         self.uses.insert(
             0,
@@ -460,7 +446,7 @@ pub enum Value<G, R> {
     StackVal(G, StackId),
 }
 
-impl<G: GroupHelper<Register = R> + PartialEq, R: RegisterHelper<G>> Value<G, R> {
+impl<G: RegClass<Register = R> + PartialEq, R: Register<G>> Value<G, R> {
     pub fn is_virtual(&self) -> bool {
         match self {
             Value::VirtualVal(_) => true,
@@ -480,11 +466,11 @@ impl<G: GroupHelper<Register = R> + PartialEq, R: RegisterHelper<G>> Value<G, R>
         }
     }
 
-    pub fn group(&self) -> G {
+    pub fn reg_class(&self) -> G {
         match self {
-            &Value::VirtualVal(ref g) => g.clone(),
-            &Value::RegisterVal(ref r) => r.group(),
-            &Value::StackVal(ref g, _) => g.clone(),
+            &Value::VirtualVal(ref rc) => rc.clone(),
+            &Value::RegisterVal(ref r) => r.reg_class(),
+            &Value::StackVal(ref rc, _) => rc.clone(),
         }
     }
 }
@@ -492,9 +478,11 @@ impl<G: GroupHelper<Register = R> + PartialEq, R: RegisterHelper<G>> Value<G, R>
 impl<G: fmt::Debug, R: fmt::Debug> fmt::Debug for Value<G, R> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Value::VirtualVal(group) => write!(fmt, "vreg({:?})", group),
+            Value::VirtualVal(reg_class) => write!(fmt, "vreg({:?})", reg_class),
             Value::RegisterVal(reg) => write!(fmt, "reg({:?})", reg),
-            Value::StackVal(group, stack_id) => write!(fmt, "stack({:?}, {:?})", group, stack_id),
+            Value::StackVal(reg_class, stack_id) => {
+                write!(fmt, "stack({:?}, {:?})", reg_class, stack_id)
+            }
         }
     }
 }
@@ -506,7 +494,7 @@ pub enum UseKind<G, R> {
     UseFixed(R),
 }
 
-impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> UseKind<G, R> {
+impl<G: RegClass<Register = R>, R: Register<G>> UseKind<G, R> {
     pub fn is_fixed(&self) -> bool {
         match self {
             &UseKind::UseFixed(_) => true,
@@ -521,11 +509,11 @@ impl<G: GroupHelper<Register = R>, R: RegisterHelper<G>> UseKind<G, R> {
         }
     }
 
-    pub fn group(&self) -> G {
+    pub fn reg_class(&self) -> G {
         match self {
-            &UseKind::UseRegister(ref g) => g.clone(),
-            &UseKind::UseAny(ref g) => g.clone(),
-            &UseKind::UseFixed(ref r) => r.group(),
+            &UseKind::UseRegister(ref rc) => rc.clone(),
+            &UseKind::UseAny(ref rc) => rc.clone(),
+            &UseKind::UseFixed(ref r) => r.reg_class(),
         }
     }
 }
@@ -612,7 +600,7 @@ pub struct GraphFields<K, G, R> {
     pub phis: Vec<InstrId>,
     pub gaps: BTreeMap<InstrId, GapState>,
     pub prepared: bool,
-    /// Maps Group -> Register -> IntervalId.
+    /// Maps RegClass -> Register -> IntervalId.
     pub physical: SmallIntMap<SmallIntMap<IntervalId>>,
 }
 
@@ -642,11 +630,8 @@ pub struct GraphWithState<K, G, R, S: GraphState> {
     pub state: S,
 }
 
-impl<
-        K: KindHelper<Group = G, Register = R>,
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-    > GraphWithState<K, G, R, BuildingGraph>
+impl<K: Kind<RegClass = G, Register = R>, G: RegClass<Register = R>, R: Register<G>>
+    GraphWithState<K, G, R, BuildingGraph>
 {
     pub fn new() -> Self {
         Self {
@@ -666,8 +651,8 @@ impl<
     }
 
     /// Create phi value
-    pub fn phi(&mut self, group: G) -> InstrId {
-        let res = Instruction::new(self, InstrKind::Phi(group), vec![]);
+    pub fn phi(&mut self, reg_class: G) -> InstrId {
+        let res = Instruction::new(self, InstrKind::Phi(reg_class), vec![]);
         // Prevent adding phi to block
         self.get_mut_instr(&res).added = true;
         self.fields.phis.push(res);
@@ -773,11 +758,8 @@ impl<K, G, R, S: GraphState> GraphWithState<K, G, R, S> {
 pub type GraphBuilder<K, G, R> = GraphWithState<K, G, R, BuildingGraph>;
 pub type Graph<K, G, R> = GraphWithState<K, G, R, FinishedGraph>;
 
-impl<
-        G: GroupHelper<Register = R>,
-        R: RegisterHelper<G>,
-        K: KindHelper<Group = G, Register = R>,
-    > Graph<K, G, R>
+impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>>
+    Graph<K, G, R>
 {
     /// Create gap (internal)
     pub fn create_gap(&mut self, block: BlockId) -> Instruction<K, G> {
@@ -848,7 +830,7 @@ impl<
     }
 
     /// Find optimal split position between two instructions
-    pub fn optimal_split_pos(&self, group: &G, start: InstrId, end: InstrId) -> InstrId {
+    pub fn optimal_split_pos(&self, reg_class: &G, start: InstrId, end: InstrId) -> InstrId {
         // Fast and unfortunate case
         if start == end {
             return end;
@@ -869,7 +851,7 @@ impl<
         }
 
         // Always split at gap
-        if !self.is_gap(&best_pos) && !self.clobbers(group, &best_pos) {
+        if !self.is_gap(&best_pos) && !self.clobbers(reg_class, &best_pos) {
             assert!(best_pos.to_uint() >= start.next().to_uint());
             best_pos = best_pos.prev();
         }
@@ -884,10 +866,10 @@ impl<
         assert!(self.get_interval(id).start() < pos);
 
         // Split could be either at gap or at call
-        let group = self.get_interval(id).value.group();
-        assert!(self.is_gap(&pos) || self.clobbers(&group, &pos));
+        let reg_class = self.get_interval(id).value.reg_class();
+        assert!(self.is_gap(&pos) || self.clobbers(&reg_class, &pos));
 
-        let child = Interval::new(self, group.clone());
+        let child = Interval::new(self, reg_class.clone());
         let parent = match self.get_interval(id).parent {
             Some(parent) => parent,
             None => *id,
@@ -905,7 +887,7 @@ impl<
         }
 
         // Insert movement
-        let split_at_call = self.clobbers(&group, &pos);
+        let split_at_call = self.clobbers(&reg_class, &pos);
         if split_at_call || !self.block_boundary(pos) {
             self.get_mut_gap(&pos).add_move(&split_parent, &child);
         }
@@ -948,7 +930,7 @@ impl<
 
         // Move out uses
         let mut child_uses = vec![];
-        let split_on_call = self.get_instr(&pos).kind.clobbers(&group);
+        let split_on_call = self.get_instr(&pos).kind.clobbers(&reg_class);
 
         // XXX: Wait for rust bug to be fixed and use filter_mapped
         let mut parent_uses = self.get_interval(&split_parent).uses.clone();
@@ -1028,7 +1010,7 @@ impl<
 
     /// Return true if instruction at specified position contains
     /// register-clobbering call.
-    pub fn clobbers(&self, group: &G, pos: &InstrId) -> bool {
-        return self.get_instr(pos).kind.clobbers(group);
+    pub fn clobbers(&self, reg_class: &G, pos: &InstrId) -> bool {
+        return self.get_instr(pos).kind.clobbers(reg_class);
     }
 }
