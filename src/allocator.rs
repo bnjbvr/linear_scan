@@ -98,15 +98,11 @@ impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register =
     for Graph<K, G, R>
 {
     fn allocate(&mut self) -> Result<AllocatorResult, String> {
-        if !self.fields.prepared {
-            // Get flat list of blocks.
-            self.flatten();
+        // Get flat list of blocks.
+        self.flatten();
 
-            // Build live_in/live_out.
-            self.liveness_analysis();
-
-            self.fields.prepared = true;
-        }
+        // Build live_in/live_out.
+        self.liveness_analysis();
 
         // Create physical fixed intervals
         let reg_classes: Vec<G> = RegClass::all_reg_classes();

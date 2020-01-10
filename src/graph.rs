@@ -599,7 +599,6 @@ pub struct GraphFields<K, G, R> {
     pub instructions: BTreeMap<InstrId, Instruction<K, G>>,
     pub phis: Vec<InstrId>,
     pub gaps: BTreeMap<InstrId, GapState>,
-    pub prepared: bool,
     /// Maps RegClass -> Register -> IntervalId.
     pub physical: SmallIntMap<SmallIntMap<IntervalId>>,
 }
@@ -614,7 +613,6 @@ impl<K, G, R> GraphFields<K, G, R> {
             instructions: BTreeMap::new(),
             phis: vec![],
             gaps: BTreeMap::new(),
-            prepared: false,
             physical: SmallIntMap::new(),
         }
     }
