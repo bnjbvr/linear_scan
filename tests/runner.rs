@@ -176,7 +176,7 @@ fn double_and_normal() {
             }
 
             let mut total = b.add(TestKind::DoubleNumber(0f64), vec![]);
-            for i in (count - 1..0).rev() {
+            for i in (1..count).rev() {
                 let left = b.add(TestKind::Sum, vec![normals[i - 1], normals[i]]);
                 let right = b.add(TestKind::DoubleSum, vec![doubles[i - 1], doubles[i]]);
                 let double_left = b.add(TestKind::ToDouble, vec![left]);

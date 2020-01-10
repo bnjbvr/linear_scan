@@ -197,7 +197,7 @@ impl Block {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Instruction<K, G> {
     pub id: InstrId,
     pub block: BlockId,
@@ -206,6 +206,16 @@ pub struct Instruction<K, G> {
     pub inputs: Vec<InstrId>,
     pub temporary: Vec<IntervalId>,
     pub added: bool,
+}
+
+impl<K: fmt::Debug, G: fmt::Debug> fmt::Debug for Instruction<K, G> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            fmt,
+            r#"{:?} in {:?}, in: {:?} temp: {:?} out: {:?} kind: {:?}"#,
+            self.id, self.block, self.inputs, self.temporary, self.output, self.kind
+        )
+    }
 }
 
 impl<G: RegClass<Register = R>, R: Register<G>, K: Kind<RegClass = G, Register = R>>

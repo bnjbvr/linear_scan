@@ -287,6 +287,8 @@ pub fn run_test(
 
     g.allocate().unwrap();
 
+    debug!("Graph after allocation: {:#?}", g);
+
     let mut emu = Emulator::new();
     let got = emu.run(&g);
     if got != expected {
