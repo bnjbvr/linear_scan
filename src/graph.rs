@@ -193,8 +193,7 @@ impl Block {
 
     pub fn end(&self) -> InstrId {
         assert!(self.instructions.len() != 0);
-        // TODO? could also be last().unwrap()+1, was last().next()
-        return *self.instructions.last().unwrap();
+        return self.instructions.last().unwrap().next();
     }
 }
 
